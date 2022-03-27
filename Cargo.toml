@@ -1,0 +1,21 @@
+[package]
+name = "dts-up"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies.swc_common]
+features = ["tty-emitter", "concurrent"]
+version = "0.17.2"
+
+[dependencies]
+smol_str = "0.1"
+petgraph = "0.6.0"
+swc_atoms = "0.2.9"
+swc_ecma_ast = "0.70"
+swc_ecma_codegen = "0.95"
+swc_ecma_parser = "0.93"
+swc_ecma_visit = "0.56"
+crossbeam-channel = "0.5"
+num_cpus = "1.13.1"

@@ -1,2 +1,2 @@
-# esbuild-plugin-dts-up
+# dts-up
 📦 Generate and rollup your d.ts files
