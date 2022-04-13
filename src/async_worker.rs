@@ -7,10 +7,12 @@ use tokio::sync::mpsc::Sender;
 
 use crate::ast;
 use crate::result::Error;
+use crate::utils::resolve_id;
 
 #[derive(Debug)]
 pub enum WorkerMessage {
-  NewDependency(SmolStr),
+  NewModule(ast::module::Module),
+  // NewDependency()
 }
 
 #[derive(Debug)]
@@ -33,10 +35,26 @@ impl AsyncWorker {
     None
   }
 
+  fn discover_module(&mut self, module: &ast::module::Module) {
+    let sub_modules = module.pre_analyze_sub_modules();
+
+    sub_modules.iter().for_each(|module_id| {
+      let module_id = resolve_id(
+        nodejs_path::resolve!(
+          nodejs_path::dirname(module.id.as_str()),
+          module_id.to_string()
+        )
+        .as_str(),
+      );
+      self.modules_to_work.lock().unwrap().push(module_id);
+    })
+  }
+
   pub async fn run(&mut self) {
     use ast::*;
 
     if let Some(resolved_id) = self.fetch_job() {
+      log::debug!("[AsyncWorker]: running job {}", resolved_id);
       let swc_module = ast::parse::parse_file(resolved_id.clone()).await.unwrap();
 
       let mut module = module::Module::from_swc_module(module::ModuleOptions {
@@ -45,27 +63,9 @@ impl AsyncWorker {
         swc_module,
       });
 
-      let imports = module.pre_analyze_import_decl();
+      self.discover_module(&module);
 
-      crate::utils::resolve_dts!("/User", "./a");
-
-      println!("{:?}", imports);
-
-      let path = Path::new(module.id.as_str());
-
-      for module_id in imports {
-        let module_id = module_id.as_str();
-
-        // TODO: external module
-        let _ = self
-          .resp_tx
-          .send(WorkerMessage::NewDependency(SmolStr::new(
-            path.join(module_id).to_string_lossy().as_ref(),
-          )))
-          .await;
-      }
-
-      // imports.iter().for_each(|module_id| {});
+      self.resp_tx.send(WorkerMessage::NewModule(module)).await;
     }
   }
 }

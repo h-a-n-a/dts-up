@@ -31,7 +31,7 @@ pub async fn parse_file(file_name: SmolStr) -> Result<swc_ecma_ast::Module, Erro
       path.to_string_lossy().to_string()
     );
     let mut buf: Vec<u8> = Default::default();
-    file.read_to_end(&mut buf).await;
+    file.read_to_end(&mut buf).await?;
 
     let fm = compiler.cm.new_source_file(
       FileName::Custom(file_name.into()),

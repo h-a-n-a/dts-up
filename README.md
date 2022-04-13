@@ -1,2 +1,2 @@
 # dts-up
-📦 Generate and rollup your d.ts files
+📦 rollup your d.ts files, with tree-shaking supported by default

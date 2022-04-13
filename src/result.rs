@@ -5,6 +5,7 @@ pub enum DtsupErrorType {
   ParseFileError,
 
   JoinError,
+  IOError,
 }
 
 #[derive(Debug)]
@@ -32,6 +33,12 @@ impl Error {
 impl From<JoinError> for Error {
   fn from(_: JoinError) -> Self {
     Error::new(DtsupErrorType::JoinError)
+  }
+}
+
+impl From<std::io::Error> for Error {
+  fn from(err: std::io::Error) -> Self {
+    Error::new_with_reason(DtsupErrorType::IOError, &err.to_string())
   }
 }
 

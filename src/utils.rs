@@ -12,20 +12,19 @@ pub fn resolve_id(id: &str) -> SmolStr {
   }
 }
 
-macro_rules! resolve_dts {
-  ( $( $x:expr ),* ) => {
-    {
-      let str = vec![];
-
-      $({
-        str.push($x);
-      })*
-
-      println!("{:?}", str);
-
-      // $relative_path::RelativePath::new(str.)
-    }
-  };
-}
-
-pub use resolve_dts;
+// #[macro_export]
+// macro_rules! resolve_dts {
+//   ( $( $x:expr ),* ) => {
+//     {
+//       let mut p: String = Default::default();
+//
+//       $({
+//         p.push_str($x);
+//       })*
+//
+//       // to be implemented
+//     }
+//   };
+// }
+//
+// pub use resolve_dts;

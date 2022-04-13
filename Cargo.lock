@@ -419,10 +419,10 @@ dependencies = [
  "env_logger",
  "futures",
  "log",
+ "nodejs_path",
  "num_cpus",
  "once_cell",
  "petgraph",
- "relative-path",
  "smol_str",
  "swc",
  "swc_atoms",
@@ -926,6 +926,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e4a24736216ec316047a1fc4252e27dabb04218aa4a3f37c6e7ddbf1f9782b54"
 
 [[package]]
+name = "nodejs_path"
+version = "0.0.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9db60a3a3f5df0f9212cff3c1623a6739deb1334d3ac2078db3109b442decda7"
+dependencies = [
+ "once_cell",
+]
+
+[[package]]
 name = "nom"
 version = "7.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1299,12 +1308,6 @@ name = "regex-syntax"
 version = "0.6.25"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f497285884f3fcff424ffc933e56d7cbca511def0c9831a7f9b5f6153e3cc89b"
-
-[[package]]
-name = "relative-path"
-version = "1.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b4e112eddc95bbf25365df3b5414354ad2fe7ee465eddb9965a515faf8c3b6d9"
 
 [[package]]
 name = "retain_mut"
