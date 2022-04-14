@@ -1,3 +1,3 @@
-import * as foo from "./foo"
+import type { Prop } from "./foo"
 
-export declare const fooo: foo.Prop
+export declare const fooo: Prop

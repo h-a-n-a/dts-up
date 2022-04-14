@@ -47,6 +47,7 @@ impl Graph {
 
     let (tx, mut rx) = mpsc::channel::<WorkerMessage>(32);
 
+    // TODO: replace with RwLock
     let modules_to_work: Arc<Mutex<Vec<ModuleId>>> =
       Arc::new(Mutex::new(self.resolved_entries.clone()));
 
@@ -85,7 +86,7 @@ impl Graph {
     {
       if let Ok(worker_message) = rx.try_recv() {
         use WorkerMessage::*;
-        log::debug!("[AsyncWorker] Received new message {:?}", worker_message);
+        log::debug!("[AsyncWorker] Received new message -> {}", worker_message);
         match worker_message {
           NewModule(module) => {
             self.id_to_module.insert(module.id.clone(), module);

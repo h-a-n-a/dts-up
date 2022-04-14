@@ -1,3 +1,4 @@
+use std::fmt::{Display, Formatter};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
@@ -13,6 +14,17 @@ use crate::utils::resolve_id;
 pub enum WorkerMessage {
   NewModule(ast::module::Module),
   // NewDependency()
+}
+
+impl Display for WorkerMessage {
+  fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    let message = match self {
+      WorkerMessage::NewModule(module) => {
+        format!("New Module: {}", module.id)
+      }
+    };
+    f.write_str(&message)
+  }
 }
 
 #[derive(Debug)]
@@ -35,7 +47,7 @@ impl AsyncWorker {
     None
   }
 
-  fn discover_module(&mut self, module: &ast::module::Module) {
+  fn discover_module(&mut self, module: &mut ast::module::Module) {
     let sub_modules = module.pre_analyze_sub_modules();
 
     sub_modules.iter().for_each(|module_id| {
@@ -63,7 +75,9 @@ impl AsyncWorker {
         swc_module,
       });
 
-      self.discover_module(&module);
+      self.discover_module(&mut module);
+
+      module.analyze();
 
       self.resp_tx.send(WorkerMessage::NewModule(module)).await;
     }

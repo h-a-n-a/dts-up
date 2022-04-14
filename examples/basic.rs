@@ -4,7 +4,7 @@ async fn main() {
   use dts_up::graph::{Graph, GraphOptions};
 
   let mut graph = Graph::new(GraphOptions {
-    entry: vec!["node-tests/import-default-interface/index.d.ts"],
+    entry: vec!["node-tests/_test/index.d.ts"],
   });
 
   graph.generate().await.unwrap();

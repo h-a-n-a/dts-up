@@ -5,11 +5,15 @@ use smol_str::SmolStr;
 use swc_atoms::JsWord;
 use swc_common::Mark;
 use swc_ecma_ast::{ImportSpecifier, ModuleDecl, ModuleItem, TsModuleRef};
+use swc_ecma_visit::VisitMutWith;
 
-use super::statement::Statement;
+use super::{module_analyzer::ModuleAnalyzer, statement::Statement};
 use crate::utils::resolve_id;
 
 pub type ModuleId = SmolStr;
+
+type LocalName = JsWord;
+type Source = JsWord;
 
 #[derive(Debug)]
 pub struct ExportDecl {
@@ -21,7 +25,15 @@ pub struct ExportDecl {
 
 #[derive(Debug)]
 pub enum ExportIdent {
-  Identifier(JsWord),
+  Name(LocalName, Source),
+  Default,
+  Namespace,
+  All,
+}
+
+#[derive(Debug)]
+pub enum ImportIdent {
+  Name(JsWord),
   Default,
   Namespace,
 }
@@ -40,6 +52,9 @@ pub struct Module {
   /// In the linking exports process, sub-modules' exports will be synchronized to upper modules(nearer to the entry point)
   pub exports: HashMap<ExportIdent, ExportDecl>,
 
+  /// sources(from import or export statement) to avoid resolving a module twice
+  pub src_to_resolved_id: HashMap<JsWord, SmolStr>,
+
   pub swc_module: swc_ecma_ast::Module,
 }
 
@@ -57,11 +72,12 @@ impl Module {
       is_entry: options.is_entry,
       statements: Default::default(),
       local_exports: Default::default(),
+      src_to_resolved_id: Default::default(),
       exports: Default::default(),
     }
   }
 
-  pub fn pre_analyze_sub_modules(&self) -> DashSet<SmolStr> {
+  pub fn pre_analyze_sub_modules(&mut self) -> DashSet<SmolStr> {
     let mut discovered_import: DashSet<SmolStr> = DashSet::new();
 
     self.swc_module.body.iter().for_each(|module_item| {
@@ -90,51 +106,29 @@ impl Module {
       }
 
       if let Some(source) = discovered {
-        discovered_import.insert(source.into());
+        let resolved_id = resolve_id(
+          nodejs_path::resolve!(
+            nodejs_path::dirname(self.id.as_str()),
+            source.as_ref().to_string()
+          )
+          .as_str(),
+        );
+
+        self
+          .src_to_resolved_id
+          .entry(source)
+          .or_insert_with(|| resolved_id.clone());
+
+        discovered_import.insert(resolved_id);
       }
     });
 
     discovered_import
   }
 
-  // fn analyze_module_decl(&mut self) {
-  //   use swc_ecma_ast::ModuleDecl;
-  //
-  //   self
-  //     .swc_module
-  //     .body
-  //     .iter()
-  //     .for_each(|module_item| match module_item {
-  //       ModuleItem::ModuleDecl(module_decl) => match module_decl {
-  //         ModuleDecl::ExportDefaultDecl(export_decl) => {}
-  //         ModuleDecl::ExportDecl(export_decl) => {}
-  //         ModuleDecl::ExportDefaultExpr(export_expr) => {}
-  //         ModuleDecl::ExportNamed(export_named) => {}
-  //         ModuleDecl::ExportAll(export_all) => {}
-  //         ModuleDecl::TsExportAssignment(ts_export_assign) => {}
-  //         ModuleDecl::TsNamespaceExport(ts_namespace_export_decl) => {}
-  //         _ => (),
-  //       },
-  //       _ => {}
-  //     })
-  // }
-  //
-  // fn analyze_stmt_decl(&mut self, stmt: &swc_ecma_ast::Stmt) {
-  //   use swc_ecma_ast::{ModuleItem, Stmt};
-  //
-  //   self
-  //     .swc_module
-  //     .body
-  //     .iter()
-  //     .for_each(|module_item| match module_item {
-  //       ModuleItem::Stmt(stmt) => {
-  //         match stmt {
-  //           Stmt::Decl(_) => {}
-  //           Stmt::Expr(_) => {}
-  //           _ => (), // for dts-up, it's not necessary to check other statements
-  //         }
-  //       }
-  //       _ => (),
-  //     })
-  // }
+  pub fn analyze(&mut self) {
+    let mut module_analyzer = ModuleAnalyzer::new();
+    self.swc_module.visit_mut_with(&mut module_analyzer);
+    println!("{:#?}", module_analyzer)
+  }
 }

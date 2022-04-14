@@ -1,9 +1,16 @@
 use ena::unify::{InPlaceUnificationTable, UnifyKey};
 use once_cell::sync::Lazy;
+use std::sync::Mutex;
 
 use swc_common::{Globals, Mark, SyntaxContext, GLOBALS};
 
 pub(crate) static SYMBOL_GLOBALS: Lazy<Globals> = Lazy::new(Globals::new);
+
+/// Singleton symbol box:
+/// Even with multi-entry or splitting chunk, symbols may be shared cross files.
+/// For multi-entry, symbols are also shared between extracted library across multiple entries.
+pub(crate) static SYMBOL_BOX: Lazy<std::sync::Arc<Mutex<SymbolBox>>> =
+  Lazy::new(|| std::sync::Arc::new(Mutex::new(SymbolBox::new())));
 
 #[derive(Debug)]
 pub struct SymbolBox {
