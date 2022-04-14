@@ -65,13 +65,12 @@ pub async fn parse_file(file_name: SmolStr) -> Result<swc_ecma_ast::Module, Erro
       ))
     })
   } else {
-    let reason = format!(
-      "Unable to parse non TypeScript declaration file {}",
-      file_name,
-    );
     Err(Error::new_with_reason(
       DtsupErrorType::ParseFileError,
-      reason.as_str(),
+      &format!(
+        "Unable to parse non TypeScript declaration file {}",
+        file_name,
+      ),
     ))
   }
 }

@@ -7,8 +7,9 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.52"
-dashmap = "3.10"
+ena = "0.14.0"
 env_logger = "0.9"
+dashmap = "3.10"
 log = "0.4"
 once_cell = "1.10"
 smol_str = "0.1"
