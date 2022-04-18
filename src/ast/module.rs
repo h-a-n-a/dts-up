@@ -25,8 +25,8 @@ pub struct ExportDecl {
 
 #[derive(Debug)]
 pub enum ExportIdent {
-  Name(LocalName, Source),
-  Default,
+  // source of export ident, only available when exporting with `export {} from ".."`
+  Name(LocalName, Option<Source>),
   Namespace,
   All,
 }
@@ -34,7 +34,6 @@ pub enum ExportIdent {
 #[derive(Debug)]
 pub enum ImportIdent {
   Name(JsWord),
-  Default,
   Namespace,
 }
 

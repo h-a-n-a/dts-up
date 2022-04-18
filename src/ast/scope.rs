@@ -18,8 +18,14 @@ pub enum VariableDeclaration {
 
 #[derive(Debug)]
 pub struct Definition {
-  pub definition_type: VariableDeclaration,
+  pub kind: VariableDeclaration,
   pub mark: Mark,
+}
+
+impl Definition {
+  pub fn new(mark: Mark, kind: VariableDeclaration) -> Self {
+    Self { mark, kind }
+  }
 }
 
 /// Good to notice:
