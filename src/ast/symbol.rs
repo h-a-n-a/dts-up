@@ -17,6 +17,11 @@ pub struct SymbolBox {
   pub mark_uf: InPlaceUnificationTable<MarkIndex>,
 }
 
+#[inline]
+pub fn new_mark() -> Mark {
+  SYMBOL_BOX.lock().unwrap().new_mark()
+}
+
 impl Default for SymbolBox {
   fn default() -> Self {
     Self::new()

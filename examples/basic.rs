@@ -4,10 +4,10 @@ async fn main() {
   use dts_up::graph::{Graph, GraphOptions};
 
   let mut graph = Graph::new(GraphOptions {
-    entry: vec!["node-tests/_test/index.d.ts"],
+    entry: "node-tests/_test/index.d.ts",
   });
 
   graph.generate().await.unwrap();
 
-  println!("\n\n Graph generated: {:?}", graph);
+  // println!("\n\n Graph generated: {:?}", graph);
 }

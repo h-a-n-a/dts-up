@@ -2,13 +2,14 @@ use std::collections::{hash_map, HashMap, HashSet};
 
 use swc_atoms::{js_word, JsWord};
 use swc_common::Mark;
-use swc_ecma_ast::{Decl, Pat};
+use swc_ecma_ast::{Decl, ExportSpecifier, Pat, TsType, TsTypeElement};
 use swc_ecma_visit::{noop_visit_mut_type, VisitMut, VisitMutWith};
 
-use super::module::{ExportIdent, ImportIdent};
+use super::module::{ExportIdent, ImportIdent, Source};
 use super::{
-  scope::{Definition, Scope, VariableDeclaration},
+  scope::{Definition, Scope, ScopeKind, VariableDeclaration},
   symbol::{self, MarkExt},
+  utils::{get_module_export_name, mark_module_export_name},
 };
 
 type LocalName = JsWord;
@@ -32,7 +33,7 @@ pub struct ModuleExportName {
   pub exported_name: LocalName,
   pub original_ident: ExportIdent,
   pub mark: Mark,
-  pub src: Option<JsWord>,
+  pub src: Option<Source>,
 }
 
 #[derive(Debug)]
@@ -40,12 +41,12 @@ pub struct ModuleExportNamespace {
   pub exported_name: LocalName,
   pub original_ident: ExportIdent,
   pub mark: Mark,
-  pub src: JsWord,
+  pub src: Source,
 }
 
 #[derive(Debug)]
 pub struct ModuleExportAll {
-  pub src: JsWord,
+  pub src: Source,
 }
 
 #[derive(Debug)]
@@ -58,7 +59,6 @@ pub enum ModuleExport {
 #[derive(Debug)]
 pub struct ModuleAnalyzer {
   pub scope: Vec<Scope>,
-  pub current_scope_depth: u32,
   pub current_import_index: u32,
   /// LocalName is always available for imports
   pub imports: HashMap<LocalName, ModuleImport>,
@@ -68,48 +68,56 @@ pub struct ModuleAnalyzer {
 impl ModuleAnalyzer {
   pub fn new() -> Self {
     Self {
-      scope: Default::default(),
-      current_scope_depth: Default::default(),
+      scope: vec![Scope::new(ScopeKind::FunctionScope)],
       current_import_index: Default::default(),
       imports: Default::default(),
       exports: Default::default(),
     }
   }
 
+  pub fn push_scope(&mut self, scope: Scope) {
+    self.scope.push(scope);
+  }
+
+  pub fn pop_scope(&mut self) {
+    self.scope.pop();
+  }
+
   pub fn advance_import_index(&mut self) {
     self.current_import_index += 1;
   }
 
-  pub fn advance_scope(&mut self) {
-    if self.current_scope_depth >= self.scope.len() as u32 {
-      panic!(
-        "[ModuleAnalyzer:Scope]: failed to advance scope, current depth: {}, current scope length: {}",
-        self.current_scope_depth,
-        self.scope.len()
-      );
-    } else {
-      self.current_scope_depth += 1;
-    }
-  }
-
-  pub fn backtrack_scope(&mut self) {
-    if self.current_scope_depth > 0 {
-      self.current_scope_depth -= 1;
-    } else {
-      panic!(
-        "[ModuleAnalyzer:Scope]: failed to backtrack scope, current depth: {}, current scope length: {}",
-        self.current_scope_depth,
-        self.scope.len()
-      );
-    }
-  }
-
   pub fn get_current_scope(&self) -> Option<&Scope> {
-    self.scope.get(self.current_scope_depth as usize)
+    self.scope.last()
   }
 
   pub fn get_current_scope_mut(&mut self) -> Option<&mut Scope> {
-    self.scope.get_mut(self.current_scope_depth as usize)
+    self.scope.last_mut()
+  }
+
+  pub fn get_current_scope_kind(&self) -> Option<&ScopeKind> {
+    self.scope.last().map(|s| &s.kind)
+  }
+
+  pub fn add_variable_read(&mut self, name: JsWord) -> Option<Mark> {
+    if let Some(mark) = self.get_mark_by_name(name) {
+      let scope = self.get_current_scope_mut().unwrap();
+
+      scope.add_variable_read(mark.clone());
+
+      return Some(mark);
+    }
+
+    None
+  }
+
+  pub fn pop_scope_on_type_param(&mut self) {
+    if matches!(
+      self.get_current_scope_kind(),
+      Some(&ScopeKind::TsTypeParameter)
+    ) {
+      self.pop_scope();
+    }
   }
 
   pub fn get_top_level_names(&self) -> Vec<JsWord> {
@@ -120,6 +128,25 @@ impl ModuleAnalyzer {
     }
 
     top_level_names
+  }
+
+  #[inline]
+  fn get_mark_by_name(&self, name: JsWord) -> Option<Mark> {
+    // reverse iterate over scopes to find if `name` is available
+    for scope in self.scope.iter().rev() {
+      if let Some(def) = scope.get_variable_definition(&name) {
+        return Some(def.mark);
+      }
+    }
+
+    // or iterate over imports
+    self.imports.iter().find_map(|(imported, module_import)| {
+      if imported == &name {
+        Some(module_import.mark.clone())
+      } else {
+        None
+      }
+    })
   }
 
   pub fn add_import(&mut self, import_decl: &mut swc_ecma_ast::ImportDecl) {
@@ -150,7 +177,7 @@ impl ModuleAnalyzer {
           original_idents.push(ImportIdent::Name(s.local.sym.clone()))
         }
 
-        let new_mark = symbol::SYMBOL_BOX.lock().unwrap().new_mark();
+        let new_mark = symbol::new_mark();
         marks.push(new_mark);
         s.span.ctxt = new_mark.as_ctxt();
       }
@@ -158,7 +185,7 @@ impl ModuleAnalyzer {
         local_names.push(s.local.sym.clone());
         original_idents.push(ImportIdent::Name(js_word!("default")));
 
-        let new_mark = symbol::SYMBOL_BOX.lock().unwrap().new_mark();
+        let new_mark = symbol::new_mark();
         marks.push(new_mark);
         s.span.ctxt = new_mark.as_ctxt();
       }
@@ -166,7 +193,7 @@ impl ModuleAnalyzer {
         local_names.push(s.local.sym.clone());
         original_idents.push(ImportIdent::Namespace);
 
-        let new_mark = symbol::SYMBOL_BOX.lock().unwrap().new_mark();
+        let new_mark = symbol::new_mark();
         marks.push(new_mark);
         s.span.ctxt = new_mark.as_ctxt();
       }
@@ -192,7 +219,108 @@ impl ModuleAnalyzer {
 }
 
 impl VisitMut for ModuleAnalyzer {
-  noop_visit_mut_type!();
+  // noop_visit_mut_type!();
+
+  fn visit_mut_fn_decl(&mut self, n: &mut swc_ecma_ast::FnDecl) {
+    n.function.type_params.visit_mut_with(self);
+    // n.visit_mut_children_with(self);
+  }
+  //
+  // fn visit_mut_ts_type(&mut self, n: &mut swc_ecma_ast::TsType) {
+  //   use swc_ecma_ast::TsType;
+  //   match n {
+  //     TsType::TsKeywordType(t) => {
+  //       // skip
+  //     }
+  //
+  //     TsType::TsThisType(t) => {
+  //       // skip
+  //     }
+  //
+  //     TsType::TsFnOrConstructorType(t) => {
+  //       // TODO: is it necessary?
+  //     }
+  //
+  //     TsType::TsTypeRef(t) => {
+  //       // reference to a TS type
+  //       // match t.
+  //     }
+  //
+  //     TsType::TsTypeQuery(t) => {}
+  //
+  //     TsType::TsTypeLit(t) => {
+  //       // TODO: maybe we should handle it in `ts type element`
+  //       // t.members.iter_mut().for_each(|member| {
+  //       //   use swc_ecma_ast::TsTypeElement;
+  //       //   match member {
+  //       //     TsTypeElement::TsGetterSignature(t) => {
+  //       //       t.key;
+  //       //     }
+  //       //     TsTypeElement::TsCallSignatureDecl(t) => {}
+  //       //     TsTypeElement::TsConstructSignatureDecl(t) => {}
+  //       //     TsTypeElement::TsPropertySignature(t) => {}
+  //       //     TsTypeElement::TsSetterSignature(t) => {}
+  //       //     TsTypeElement::TsMethodSignature(t) => {}
+  //       //     TsTypeElement::TsIndexSignature(t) => {}
+  //       //   }
+  //       // });
+  //     }
+  //
+  //     TsType::TsArrayType(t) => {
+  //       // recursively visit its children
+  //       t.elem_type.visit_mut_children_with(self);
+  //     }
+  //
+  //     TsType::TsTupleType(t) => {}
+  //
+  //     TsType::TsOptionalType(t) => {}
+  //
+  //     TsType::TsRestType(t) => {}
+  //
+  //     TsType::TsUnionOrIntersectionType(t) => {}
+  //
+  //     TsType::TsConditionalType(t) => {}
+  //
+  //     TsType::TsInferType(t) => {}
+  //
+  //     TsType::TsParenthesizedType(t) => {}
+  //
+  //     TsType::TsTypeOperator(t) => {}
+  //
+  //     TsType::TsIndexedAccessType(t) => {}
+  //
+  //     TsType::TsMappedType(t) => {}
+  //
+  //     TsType::TsLitType(t) => {}
+  //
+  //     TsType::TsTypePredicate(t) => {}
+  //
+  //     TsType::TsImportType(t) => {}
+  //   }
+  // }
+
+  fn visit_mut_opt_ts_type_param_decl(&mut self, n: &mut Option<swc_ecma_ast::TsTypeParamDecl>) {
+    if let Some(type_param) = n {
+      self.push_scope(Scope::new(ScopeKind::TsTypeParameter));
+
+      if let Some(scope) = self.get_current_scope_mut() {
+        type_param.params.iter_mut().for_each(|param| {
+          let new_mark = symbol::new_mark();
+          param.span.ctxt = new_mark.as_ctxt();
+
+          scope.add_variable_definition(
+            param.name.sym.clone(),
+            VariableDeclaration::TsTypeParameter,
+            new_mark,
+          );
+
+          if let Some(default) = &param.default {}
+        })
+
+        // scope.add_variable_definition(n)
+      }
+    }
+  }
 
   fn visit_mut_module_decl(&mut self, n: &mut swc_ecma_ast::ModuleDecl) {
     use swc_ecma_ast::{ImportDecl, ModuleDecl};
@@ -204,17 +332,19 @@ impl VisitMut for ModuleAnalyzer {
       ModuleDecl::ExportDecl(export_decl) => {
         use swc_ecma_ast::{Decl, Pat};
 
-        match &export_decl.decl {
-          Decl::Var(v) => v.decls.iter().for_each(|decl| match &decl.name {
+        match &mut export_decl.decl {
+          Decl::Var(v) => v.decls.iter_mut().for_each(|decl| match &mut decl.name {
             Pat::Ident(ident) => {
-              let new_mark = symbol::SYMBOL_BOX.lock().unwrap().new_mark();
+              let new_mark = symbol::new_mark();
+              ident.id.span.ctxt = new_mark.as_ctxt();
 
-              self.get_current_scope_mut().and_then(|scope| {
-                scope.definitions.insert(
+              if let Some(scope) = self.get_current_scope_mut() {
+                scope.add_variable_definition(
                   ident.id.sym.clone(),
-                  Definition::new(new_mark, VariableDeclaration::VariableDeclaration),
-                )
-              });
+                  VariableDeclaration::VariableDeclaration,
+                  new_mark,
+                );
+              }
 
               self.exports.push(ModuleExport::Name(ModuleExportName {
                 exported_name: ident.id.sym.clone(),
@@ -231,14 +361,16 @@ impl VisitMut for ModuleAnalyzer {
             }
           }),
           Decl::Class(c) => {
-            let new_mark = symbol::SYMBOL_BOX.lock().unwrap().new_mark();
+            let new_mark = symbol::new_mark();
+            c.ident.span.ctxt = new_mark.as_ctxt();
 
-            self.get_current_scope_mut().and_then(|scope| {
-              scope.definitions.insert(
+            if let Some(scope) = self.get_current_scope_mut() {
+              scope.add_variable_definition(
                 c.ident.sym.clone(),
-                Definition::new(new_mark, VariableDeclaration::ClassDeclaration),
-              )
-            });
+                VariableDeclaration::ClassDeclaration,
+                new_mark,
+              );
+            }
 
             self.exports.push(ModuleExport::Name(ModuleExportName {
               exported_name: c.ident.sym.clone(),
@@ -248,14 +380,16 @@ impl VisitMut for ModuleAnalyzer {
             }))
           }
           Decl::Fn(f) => {
-            let new_mark = symbol::SYMBOL_BOX.lock().unwrap().new_mark();
+            let new_mark = symbol::new_mark();
+            f.ident.span.ctxt = new_mark.as_ctxt();
 
-            self.get_current_scope_mut().and_then(|scope| {
-              scope.definitions.insert(
+            if let Some(scope) = self.get_current_scope_mut() {
+              scope.add_variable_definition(
                 f.ident.sym.clone(),
-                Definition::new(new_mark, VariableDeclaration::FunctionDeclaration),
-              )
-            });
+                VariableDeclaration::FunctionDeclaration,
+                new_mark,
+              );
+            }
 
             self.exports.push(ModuleExport::Name(ModuleExportName {
               exported_name: f.ident.sym.clone(),
@@ -265,14 +399,16 @@ impl VisitMut for ModuleAnalyzer {
             }))
           }
           Decl::TsInterface(t) => {
-            let new_mark = symbol::SYMBOL_BOX.lock().unwrap().new_mark();
+            let new_mark = symbol::new_mark();
+            t.span.ctxt = new_mark.as_ctxt();
 
-            self.get_current_scope_mut().and_then(|scope| {
-              scope.definitions.insert(
+            if let Some(scope) = self.get_current_scope_mut() {
+              scope.add_variable_definition(
                 t.id.sym.clone(),
-                Definition::new(new_mark, VariableDeclaration::TsInterfaceDeclaration),
-              )
-            });
+                VariableDeclaration::TsInterfaceDeclaration,
+                new_mark,
+              );
+            }
 
             self.exports.push(ModuleExport::Name(ModuleExportName {
               exported_name: t.id.sym.clone(),
@@ -282,15 +418,16 @@ impl VisitMut for ModuleAnalyzer {
             }))
           }
           Decl::TsTypeAlias(t) => {
-            let new_mark = symbol::SYMBOL_BOX.lock().unwrap().new_mark();
+            let new_mark = symbol::new_mark();
+            t.span.ctxt = new_mark.as_ctxt();
 
-            self.get_current_scope_mut().and_then(|scope| {
-              scope.definitions.insert(
+            if let Some(scope) = self.get_current_scope_mut() {
+              scope.add_variable_definition(
                 t.id.sym.clone(),
-                Definition::new(new_mark, VariableDeclaration::TsTypeAliasDeclaration),
-              )
-            });
-
+                VariableDeclaration::TsTypeAliasDeclaration,
+                new_mark,
+              );
+            }
             self.exports.push(ModuleExport::Name(ModuleExportName {
               exported_name: t.id.sym.clone(),
               original_ident: ExportIdent::Name(t.id.sym.clone(), None),
@@ -299,14 +436,16 @@ impl VisitMut for ModuleAnalyzer {
             }))
           }
           Decl::TsEnum(t) => {
-            let new_mark = symbol::SYMBOL_BOX.lock().unwrap().new_mark();
+            let new_mark = symbol::new_mark();
+            t.span.ctxt = new_mark.as_ctxt();
 
-            self.get_current_scope_mut().and_then(|scope| {
-              scope.definitions.insert(
+            if let Some(scope) = self.get_current_scope_mut() {
+              scope.add_variable_definition(
                 t.id.sym.clone(),
-                Definition::new(new_mark, VariableDeclaration::TsEnumDeclaration),
-              )
-            });
+                VariableDeclaration::TsEnumDeclaration,
+                new_mark,
+              );
+            }
 
             self.exports.push(ModuleExport::Name(ModuleExportName {
               exported_name: t.id.sym.clone(),
@@ -318,11 +457,86 @@ impl VisitMut for ModuleAnalyzer {
           Decl::TsModule(t) => {}
         }
       }
-      ModuleDecl::ExportNamed(named_export) => {}
-      ModuleDecl::ExportDefaultDecl(ExportDefaultDecl) => {}
-      ModuleDecl::ExportDefaultExpr(ExportDefaultExpr) => {}
-      ModuleDecl::ExportAll(ExportAll) => {}
+      ModuleDecl::ExportNamed(named_export) => {
+        use swc_ecma_ast::ExportSpecifier;
+
+        named_export.specifiers.iter_mut().for_each(|s| match s {
+          ExportSpecifier::Named(named) => {
+            let new_mark = self
+              .get_mark_by_name(get_module_export_name(&named.orig))
+              .unwrap_or_else(|| symbol::new_mark());
+
+            let exported_name: JsWord = {
+              use swc_ecma_ast::ModuleExportName;
+
+              let name;
+              if named.exported.is_some() {
+                mark_module_export_name(named.exported.as_mut().unwrap(), new_mark);
+                name = named.exported.as_ref();
+              } else {
+                mark_module_export_name(&mut named.orig, new_mark);
+                name = Some(&named.orig);
+              }
+
+              get_module_export_name(name.unwrap())
+            };
+
+            let src = named_export.src.as_ref().map(|src| src.value.clone());
+
+            self.exports.push(ModuleExport::Name(ModuleExportName {
+              exported_name,
+              original_ident: ExportIdent::Name(get_module_export_name(&named.orig), src.clone()),
+              mark: new_mark,
+              src: src.clone(),
+            }))
+          }
+          ExportSpecifier::Namespace(namespace) => {
+            let new_mark = symbol::new_mark();
+            namespace.span.ctxt = new_mark.as_ctxt();
+
+            self
+              .exports
+              .push(ModuleExport::Namespace(ModuleExportNamespace {
+                exported_name: get_module_export_name(&namespace.name),
+                original_ident: ExportIdent::Namespace,
+                mark: new_mark,
+                // source is always available in namespaces
+                src: named_export
+                  .src
+                  .as_ref()
+                  .map(|src| src.value.clone())
+                  .unwrap(),
+              }))
+          }
+          ExportSpecifier::Default(default) => {}
+        });
+      }
+      ModuleDecl::ExportDefaultDecl(export_default) => {
+        let name = js_word!("default");
+        let new_mark = symbol::new_mark();
+        export_default.span.ctxt = new_mark.as_ctxt();
+
+        self.exports.push(ModuleExport::Name(ModuleExportName {
+          exported_name: name.clone(),
+          original_ident: ExportIdent::Name(name.clone(), None),
+          mark: new_mark,
+          src: None,
+        }))
+      }
+      ModuleDecl::ExportAll(export_all) => {
+        let new_mark = symbol::new_mark();
+        export_all.span.ctxt = new_mark.as_ctxt();
+
+        self.exports.push(ModuleExport::All(ModuleExportAll {
+          src: export_all.src.value.clone(),
+        }))
+      }
+      ModuleDecl::ExportDefaultExpr(export_default_expr) => {
+        log::warn!("[ModuleAnalyzer] `ExportDefaultExpr` should not exist in dts files");
+      }
       _ => (),
     }
+
+    n.visit_mut_children_with(self);
   }
 }

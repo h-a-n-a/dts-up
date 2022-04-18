@@ -6,26 +6,27 @@ use smol_str::SmolStr;
 
 use crate::ast::module::ModuleId;
 
+#[derive(Debug)]
 pub struct ModuleEdgeImport {
-  importer: SmolStr,
-  importee: SmolStr,
+  pub index: u32,
 }
 
-pub struct ModuleEdgeReExport {
-  exporter: SmolStr,
-  exportee: SmolStr,
-}
+#[derive(Debug)]
+pub struct ModuleEdgeReExport {}
 
+#[derive(Debug)]
 pub enum ModuleEdge {
   Import(ModuleEdgeImport),
-  ReExport(ModuleEdgeReExport),
+  DynamicImport,
+  Export,
 }
 
 pub type ModuleIndex = NodeIndex;
 
+#[derive(Debug)]
 pub struct ModuleGraph {
-  pub inner: Graph<ModuleId, ModuleEdge, Directed, DefaultIx>,
-  pub module_id_to_index: HashMap<ModuleId, ModuleIndex>,
+  inner: Graph<ModuleId, ModuleEdge, Directed, DefaultIx>,
+  module_id_to_index: HashMap<ModuleId, ModuleIndex>,
 }
 
 impl ModuleGraph {
@@ -45,6 +46,14 @@ impl ModuleGraph {
       .or_insert(module_index);
 
     module_index
+  }
+
+  pub fn get_or_add_module(&mut self, module_id: SmolStr) -> ModuleIndex {
+    if let Some(module_index) = self.module_id_to_index.get(&module_id) {
+      module_index.clone()
+    } else {
+      self.add_module(module_id)
+    }
   }
 
   pub fn add_edge(
@@ -67,7 +76,7 @@ impl ModuleGraph {
       .map(|index| index.clone())
   }
 
-  pub fn get_direct_edges(
+  pub fn get_edges_directed(
     &self,
     module_index: ModuleIndex,
     direction: Direction,

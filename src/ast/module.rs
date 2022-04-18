@@ -12,8 +12,8 @@ use crate::utils::resolve_id;
 
 pub type ModuleId = SmolStr;
 
-type LocalName = JsWord;
-type Source = JsWord;
+pub type LocalName = JsWord;
+pub type Source = JsWord;
 
 #[derive(Debug)]
 pub struct ExportDecl {
@@ -125,9 +125,10 @@ impl Module {
     discovered_import
   }
 
-  pub fn analyze(&mut self) {
+  pub fn analyze(&mut self) -> ModuleAnalyzer {
     let mut module_analyzer = ModuleAnalyzer::new();
     self.swc_module.visit_mut_with(&mut module_analyzer);
-    println!("{:#?}", module_analyzer)
+    println!("{:#?}", module_analyzer);
+    module_analyzer
   }
 }

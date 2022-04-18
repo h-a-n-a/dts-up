@@ -17,6 +17,14 @@ pub enum VariableDeclaration {
 }
 
 #[derive(Debug)]
+pub enum ScopeKind {
+  TsTypeParameter,
+  // These two seemed unnecessary to have
+  FunctionScope,
+  BlockScope,
+}
+
+#[derive(Debug)]
 pub struct Definition {
   pub kind: VariableDeclaration,
   pub mark: Mark,
@@ -29,34 +37,60 @@ impl Definition {
 }
 
 /// Good to notice:
-/// Type and value declarations are actually two totally different stuff, but in this scenario, single scope makes sense.
+/// Type and value declarations are actually two totally different stuff, but in this scenario, single scope type makes sense.
+/// In JavaScript, we should differentiate scopes into function scope, block scope, etc.
 #[derive(Debug)]
 pub struct Scope {
-  pub definitions: HashMap<JsWord, Definition>,
-  pub mark_to_name: HashMap<Mark, JsWord>,
-  pub reads: HashSet<Mark>,
+  pub(crate) kind: ScopeKind,
+  pub(crate) definitions: HashMap<JsWord, Definition>,
+  mark_to_name: HashMap<Mark, JsWord>,
+  reads: HashSet<Mark>,
 }
 
 impl Scope {
-  fn get_variable_definition(&self, name: JsWord) -> Option<&Definition> {
-    self.definitions.get(&name)
+  pub fn new(kind: ScopeKind) -> Self {
+    Self {
+      kind,
+      definitions: Default::default(),
+      mark_to_name: Default::default(),
+      reads: Default::default(),
+    }
   }
 
-  fn add_variable_definition(&mut self, name: JsWord, definition_type: VariableDeclaration) {
+  pub fn get_scope_kind(&self) -> &ScopeKind {
+    &self.kind
+  }
+
+  pub fn get_variable_definition(&self, name: &JsWord) -> Option<&Definition> {
+    self.definitions.get(name)
+  }
+
+  pub fn add_variable_definition(
+    &mut self,
+    name: JsWord,
+    definition_type: VariableDeclaration,
+    mark: Mark,
+  ) {
     use std::collections::hash_map::Entry;
 
-    match self.definitions.entry(name) {
+    match self.definitions.entry(name.clone()) {
       Entry::Vacant(vacant) => {
-        // let def = Definition { definition_type };
-        // vacant.insert(def);
+        vacant.insert(Definition::new(mark.clone(), definition_type));
+        self.mark_to_name.insert(mark, name);
       }
       Entry::Occupied(occupied) => {
         // Interfaces may be defined multiple times in the same scope
+        if !matches!(definition_type, VariableDeclaration::TsInterfaceDeclaration) {
+          panic!(
+            "[Scope] unable to declare {:?} multiple times",
+            definition_type
+          )
+        }
       }
     }
   }
 
-  fn add_variable_read(&mut self, variable_mark: Mark) {
+  pub fn add_variable_read(&mut self, variable_mark: Mark) {
     self.reads.insert(variable_mark);
   }
 }

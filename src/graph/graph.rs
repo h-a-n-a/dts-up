@@ -9,19 +9,21 @@ use tokio::sync::mpsc::{self, Sender};
 use crate::{
   ast::{self, module::ModuleId},
   async_worker::{AsyncWorker, WorkerMessage},
+  graph::{ModuleEdge, ModuleGraph},
   result::Error,
   utils::resolve_id,
 };
 
 #[derive(Debug)]
 pub struct Graph {
-  resolved_entries: Vec<ModuleId>,
+  resolved_entry: ModuleId,
+  module_graph: ModuleGraph,
   id_to_module: HashMap<ModuleId, ast::module::Module>,
 }
 
 #[derive(Debug)]
 pub struct GraphOptions<T: AsRef<str>> {
-  pub entry: Vec<T>,
+  pub entry: T,
 }
 
 impl Graph {
@@ -29,15 +31,12 @@ impl Graph {
   where
     T: AsRef<str>,
   {
-    let resolved_entries = options
-      .entry
-      .iter()
-      .map(|item| resolve_id(&nodejs_path::resolve!(item.as_ref())))
-      .collect::<Vec<ModuleId>>();
+    let resolved_entry = resolve_id(&nodejs_path::resolve!(options.entry.as_ref()));
 
     Self {
-      resolved_entries,
+      resolved_entry,
       id_to_module: Default::default(),
+      module_graph: ModuleGraph::new(),
     }
   }
 
@@ -49,7 +48,9 @@ impl Graph {
 
     // TODO: replace with RwLock
     let modules_to_work: Arc<Mutex<Vec<ModuleId>>> =
-      Arc::new(Mutex::new(self.resolved_entries.clone()));
+      Arc::new(Mutex::new(vec![self.resolved_entry.clone()]));
+
+    self.module_graph.add_module(self.resolved_entry.clone());
 
     let worked_modules: Arc<DashSet<ModuleId>> = Arc::new(DashSet::new());
 
@@ -59,7 +60,7 @@ impl Graph {
         resp_tx: tx.clone(),
         modules_to_work: modules_to_work.clone(),
         worked_modules: worked_modules.clone(),
-        resolved_entries: Arc::new(DashSet::from_iter(self.resolved_entries.clone())),
+        resolved_entries: Arc::new(DashSet::from_iter(vec![self.resolved_entry.clone()])),
       };
 
       tokio::spawn(async move {
@@ -79,8 +80,6 @@ impl Graph {
       });
     }
 
-    drop(tx);
-
     while !modules_to_work.lock().unwrap().is_empty()
       || idle_thread_count.load(Ordering::SeqCst) != num_of_threads
     {
@@ -89,7 +88,16 @@ impl Graph {
         log::debug!("[AsyncWorker] Received new message -> {}", worker_message);
         match worker_message {
           NewModule(module) => {
-            self.id_to_module.insert(module.id.clone(), module);
+            let id = module.id.clone();
+            self.id_to_module.insert(id.clone(), module);
+            self.module_graph.get_or_add_module(id.clone());
+          }
+          NewDependency(from_id, to_id, edge) => {
+            let from_module_index = self.module_graph.get_or_add_module(from_id);
+            let to_module_index = self.module_graph.get_or_add_module(to_id);
+            self
+              .module_graph
+              .add_edge(from_module_index, to_module_index, edge);
           }
         }
       }

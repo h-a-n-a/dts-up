@@ -1,3 +1,5 @@
-import type { Prop } from "./foo"
+// import type { Prop } from "./foo"
 
-export declare const fooo: Prop
+export declare function fooo<T>(): T
+
+export type { Prop } from "./foo"

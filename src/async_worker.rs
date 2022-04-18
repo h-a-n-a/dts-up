@@ -1,19 +1,29 @@
+use std::collections::{HashMap, HashSet};
 use std::fmt::{Display, Formatter};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use dashmap::DashSet;
 use smol_str::SmolStr;
+use swc_atoms::JsWord;
 use tokio::sync::mpsc::Sender;
 
-use crate::ast;
+use crate::ast::module::{LocalName, ModuleId};
+use crate::ast::{
+  self,
+  module_analyzer::{ModuleExport, ModuleImport},
+};
+use crate::graph::{ModuleEdge, ModuleEdgeImport};
 use crate::result::Error;
 use crate::utils::resolve_id;
+
+type FromModule = ModuleId;
+type ToModule = ModuleId;
 
 #[derive(Debug)]
 pub enum WorkerMessage {
   NewModule(ast::module::Module),
-  // NewDependency()
+  NewDependency(FromModule, ToModule, ModuleEdge),
 }
 
 impl Display for WorkerMessage {
@@ -21,6 +31,12 @@ impl Display for WorkerMessage {
     let message = match self {
       WorkerMessage::NewModule(module) => {
         format!("New Module: {}", module.id)
+      }
+      WorkerMessage::NewDependency(from_id, to_id, edge) => {
+        format!(
+          "New Dependency from {} to {}, with edge {:?}",
+          from_id, to_id, edge
+        )
       }
     };
     f.write_str(&message)
@@ -62,6 +78,62 @@ impl AsyncWorker {
     })
   }
 
+  pub async fn add_import_graph(
+    &mut self,
+    module: &ast::module::Module,
+    imports: &HashMap<LocalName, ModuleImport>,
+  ) {
+    let mut import: HashSet<ModuleId> = Default::default();
+
+    for module_import in imports.values() {
+      let module_id = module.src_to_resolved_id.get(&module_import.src).unwrap();
+      if !import.contains(module_id) {
+        import.insert(module_id.clone());
+        self
+          .resp_tx
+          .send(WorkerMessage::NewDependency(
+            module.id.clone(),
+            module_id.clone(),
+            ModuleEdge::Import(ModuleEdgeImport {
+              index: module_import.index,
+            }),
+          ))
+          .await;
+      }
+    }
+  }
+
+  pub async fn add_export_graph(
+    &mut self,
+    module: &ast::module::Module,
+    exports: &Vec<ModuleExport>,
+  ) {
+    for module_export in exports {
+      let mut src: Option<JsWord> = Default::default();
+
+      match module_export {
+        ModuleExport::Name(e) => {
+          src = e.src.clone();
+        }
+        ModuleExport::All(e) => src = Some(e.src.clone()),
+        ModuleExport::Namespace(e) => src = Some(e.src.clone()),
+      };
+
+      if let Some(src) = src.take() {
+        let resolved_id = module.src_to_resolved_id.get(&src).unwrap();
+
+        self
+          .resp_tx
+          .send(WorkerMessage::NewDependency(
+            module.id.clone(),
+            resolved_id.clone(),
+            ModuleEdge::Export,
+          ))
+          .await;
+      }
+    }
+  }
+
   pub async fn run(&mut self) {
     use ast::*;
 
@@ -77,7 +149,15 @@ impl AsyncWorker {
 
       self.discover_module(&mut module);
 
-      module.analyze();
+      let module_analyzer = module.analyze();
+
+      self
+        .add_import_graph(&module, &module_analyzer.imports)
+        .await;
+
+      self
+        .add_export_graph(&module, &module_analyzer.exports)
+        .await;
 
       self.resp_tx.send(WorkerMessage::NewModule(module)).await;
     }
