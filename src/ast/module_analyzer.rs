@@ -68,7 +68,7 @@ pub struct ModuleAnalyzer {
 impl ModuleAnalyzer {
   pub fn new() -> Self {
     Self {
-      scope: vec![Scope::new(ScopeKind::FunctionScope)],
+      scope: vec![Scope::new(ScopeKind::TypeScope)],
       current_import_index: Default::default(),
       imports: Default::default(),
       exports: Default::default(),
@@ -99,14 +99,15 @@ impl ModuleAnalyzer {
     self.scope.last().map(|s| &s.kind)
   }
 
-  pub fn add_variable_read(&mut self, name: JsWord) -> Option<Mark> {
+  pub fn add_variable_read(&mut self, name: &JsWord) -> Option<Mark> {
     if let Some(mark) = self.get_mark_by_name(name) {
       let scope = self.get_current_scope_mut().unwrap();
-
       scope.add_variable_read(mark.clone());
 
       return Some(mark);
     }
+
+    // Maybe we encountered a global type reference, which is not necessary for us to bind
 
     None
   }
@@ -131,17 +132,17 @@ impl ModuleAnalyzer {
   }
 
   #[inline]
-  fn get_mark_by_name(&self, name: JsWord) -> Option<Mark> {
+  fn get_mark_by_name(&self, name: &JsWord) -> Option<Mark> {
     // reverse iterate over scopes to find if `name` is available
     for scope in self.scope.iter().rev() {
-      if let Some(def) = scope.get_variable_definition(&name) {
+      if let Some(def) = scope.get_variable_definition(name) {
         return Some(def.mark);
       }
     }
 
     // or iterate over imports
     self.imports.iter().find_map(|(imported, module_import)| {
-      if imported == &name {
+      if imported == name {
         Some(module_import.mark.clone())
       } else {
         None
@@ -225,101 +226,82 @@ impl VisitMut for ModuleAnalyzer {
     n.function.type_params.visit_mut_with(self);
     // n.visit_mut_children_with(self);
   }
-  //
-  // fn visit_mut_ts_type(&mut self, n: &mut swc_ecma_ast::TsType) {
-  //   use swc_ecma_ast::TsType;
-  //   match n {
-  //     TsType::TsKeywordType(t) => {
-  //       // skip
-  //     }
-  //
-  //     TsType::TsThisType(t) => {
-  //       // skip
-  //     }
-  //
-  //     TsType::TsFnOrConstructorType(t) => {
-  //       // TODO: is it necessary?
-  //     }
-  //
-  //     TsType::TsTypeRef(t) => {
-  //       // reference to a TS type
-  //       // match t.
-  //     }
-  //
-  //     TsType::TsTypeQuery(t) => {}
-  //
-  //     TsType::TsTypeLit(t) => {
-  //       // TODO: maybe we should handle it in `ts type element`
-  //       // t.members.iter_mut().for_each(|member| {
-  //       //   use swc_ecma_ast::TsTypeElement;
-  //       //   match member {
-  //       //     TsTypeElement::TsGetterSignature(t) => {
-  //       //       t.key;
-  //       //     }
-  //       //     TsTypeElement::TsCallSignatureDecl(t) => {}
-  //       //     TsTypeElement::TsConstructSignatureDecl(t) => {}
-  //       //     TsTypeElement::TsPropertySignature(t) => {}
-  //       //     TsTypeElement::TsSetterSignature(t) => {}
-  //       //     TsTypeElement::TsMethodSignature(t) => {}
-  //       //     TsTypeElement::TsIndexSignature(t) => {}
-  //       //   }
-  //       // });
-  //     }
-  //
-  //     TsType::TsArrayType(t) => {
-  //       // recursively visit its children
-  //       t.elem_type.visit_mut_children_with(self);
-  //     }
-  //
-  //     TsType::TsTupleType(t) => {}
-  //
-  //     TsType::TsOptionalType(t) => {}
-  //
-  //     TsType::TsRestType(t) => {}
-  //
-  //     TsType::TsUnionOrIntersectionType(t) => {}
-  //
-  //     TsType::TsConditionalType(t) => {}
-  //
-  //     TsType::TsInferType(t) => {}
-  //
-  //     TsType::TsParenthesizedType(t) => {}
-  //
-  //     TsType::TsTypeOperator(t) => {}
-  //
-  //     TsType::TsIndexedAccessType(t) => {}
-  //
-  //     TsType::TsMappedType(t) => {}
-  //
-  //     TsType::TsLitType(t) => {}
-  //
-  //     TsType::TsTypePredicate(t) => {}
-  //
-  //     TsType::TsImportType(t) => {}
-  //   }
-  // }
 
-  fn visit_mut_opt_ts_type_param_decl(&mut self, n: &mut Option<swc_ecma_ast::TsTypeParamDecl>) {
-    if let Some(type_param) = n {
-      self.push_scope(Scope::new(ScopeKind::TsTypeParameter));
+  fn visit_mut_class_decl(&mut self, n: &mut swc_ecma_ast::ClassDecl) {
+    n.class.type_params.visit_mut_with(self);
+  }
 
-      if let Some(scope) = self.get_current_scope_mut() {
-        type_param.params.iter_mut().for_each(|param| {
-          let new_mark = symbol::new_mark();
-          param.span.ctxt = new_mark.as_ctxt();
+  fn visit_mut_ts_type_ann(&mut self, n: &mut swc_ecma_ast::TsTypeAnn) {
+    // already included in `TsType` visitor
+  }
 
-          scope.add_variable_definition(
-            param.name.sym.clone(),
-            VariableDeclaration::TsTypeParameter,
-            new_mark,
-          );
-
-          if let Some(default) = &param.default {}
-        })
-
-        // scope.add_variable_definition(n)
+  fn visit_mut_ts_type_element(&mut self, n: &mut swc_ecma_ast::TsTypeElement) {
+    use swc_ecma_ast::{Expr, TsTypeElement};
+    match n {
+      TsTypeElement::TsPropertySignature(prop) => {
+        prop.type_ann.visit_mut_with(self);
+      }
+      _ => {
+        // temporarily not support
       }
     }
+  }
+
+  fn visit_mut_ts_interface_decl(&mut self, n: &mut swc_ecma_ast::TsInterfaceDecl) {
+    n.type_params.visit_mut_with(self);
+    let scope = self.get_current_scope_mut().unwrap();
+
+    let new_mark = symbol::new_mark();
+    n.id.span.ctxt = new_mark.as_ctxt();
+
+    scope.add_variable_definition(
+      n.id.sym.clone(),
+      VariableDeclaration::TsInterfaceDeclaration,
+      new_mark,
+    );
+
+    self.push_scope(Scope::new(ScopeKind::TypeScope));
+
+    n.extends.iter_mut().for_each(|extend| {
+      use swc_ecma_ast::Expr;
+      match extend.expr.as_mut() {
+        Expr::Ident(ident) => {
+          let mut mark = self.add_variable_read(&ident.sym);
+          if let Some(mark) = mark.take() {
+            ident.span.ctxt = mark.as_ctxt();
+          }
+        }
+        _ => {
+          // currently we don't support these
+        }
+      }
+    });
+
+    n.body.visit_mut_children_with(self);
+
+    self.pop_scope();
+    self.pop_scope_on_type_param();
+  }
+
+  fn visit_mut_ts_type_param_decl(&mut self, n: &mut swc_ecma_ast::TsTypeParamDecl) {
+    self.push_scope(Scope::new(ScopeKind::TsTypeParameter));
+
+    if let Some(scope) = self.get_current_scope_mut() {
+      n.params.iter_mut().for_each(|param| {
+        let new_mark = symbol::new_mark();
+        param.span.ctxt = new_mark.as_ctxt();
+
+        scope.add_variable_definition(
+          param.name.sym.clone(),
+          VariableDeclaration::TsTypeParameter,
+          new_mark,
+        );
+
+        // `param.default` is visited with `visit_mut_ts_type`
+      });
+    }
+
+    n.visit_mut_children_with(self);
   }
 
   fn visit_mut_module_decl(&mut self, n: &mut swc_ecma_ast::ModuleDecl) {
@@ -463,7 +445,7 @@ impl VisitMut for ModuleAnalyzer {
         named_export.specifiers.iter_mut().for_each(|s| match s {
           ExportSpecifier::Named(named) => {
             let new_mark = self
-              .get_mark_by_name(get_module_export_name(&named.orig))
+              .get_mark_by_name(&get_module_export_name(&named.orig))
               .unwrap_or_else(|| symbol::new_mark());
 
             let exported_name: JsWord = {
@@ -538,5 +520,87 @@ impl VisitMut for ModuleAnalyzer {
     }
 
     n.visit_mut_children_with(self);
+  }
+
+  fn visit_mut_ts_type(&mut self, n: &mut swc_ecma_ast::TsType) {
+    use swc_ecma_ast::TsType;
+    match n {
+      TsType::TsKeywordType(t) => {
+        // skip
+      }
+
+      TsType::TsThisType(t) => {
+        // skip
+      }
+
+      TsType::TsFnOrConstructorType(t) => {
+        // TODO: is it necessary?
+      }
+
+      TsType::TsTypeRef(t) => {
+        use swc_ecma_ast::TsEntityName;
+        // reference to a TS type
+        match &mut t.type_name {
+          TsEntityName::Ident(ident) => {
+            let mut mark = self.add_variable_read(&ident.sym);
+            if let Some(mark) = mark.take() {
+              ident.span.ctxt = mark.as_ctxt();
+            }
+          }
+          TsEntityName::TsQualifiedName(q) => {}
+        }
+      }
+
+      TsType::TsTypeQuery(t) => {}
+
+      TsType::TsTypeLit(t) => {
+        // TODO: maybe we should handle it in `ts type element`
+        // t.members.iter_mut().for_each(|member| {
+        //   use swc_ecma_ast::TsTypeElement;
+        //   match member {
+        //     TsTypeElement::TsGetterSignature(t) => {
+        //       t.key;
+        //     }
+        //     TsTypeElement::TsCallSignatureDecl(t) => {}
+        //     TsTypeElement::TsConstructSignatureDecl(t) => {}
+        //     TsTypeElement::TsPropertySignature(t) => {}
+        //     TsTypeElement::TsSetterSignature(t) => {}
+        //     TsTypeElement::TsMethodSignature(t) => {}
+        //     TsTypeElement::TsIndexSignature(t) => {}
+        //   }
+        // });
+      }
+
+      TsType::TsArrayType(t) => {
+        // recursively visit its children
+        t.elem_type.visit_mut_children_with(self);
+      }
+
+      TsType::TsTupleType(t) => {}
+
+      TsType::TsOptionalType(t) => {}
+
+      TsType::TsRestType(t) => {}
+
+      TsType::TsUnionOrIntersectionType(t) => {}
+
+      TsType::TsConditionalType(t) => {}
+
+      TsType::TsInferType(t) => {}
+
+      TsType::TsParenthesizedType(t) => {}
+
+      TsType::TsTypeOperator(t) => {}
+
+      TsType::TsIndexedAccessType(t) => {}
+
+      TsType::TsMappedType(t) => {}
+
+      TsType::TsLitType(t) => {}
+
+      TsType::TsTypePredicate(t) => {}
+
+      TsType::TsImportType(t) => {}
+    }
   }
 }

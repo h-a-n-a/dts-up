@@ -19,9 +19,7 @@ pub enum VariableDeclaration {
 #[derive(Debug)]
 pub enum ScopeKind {
   TsTypeParameter,
-  // These two seemed unnecessary to have
-  FunctionScope,
-  BlockScope,
+  TypeScope,
 }
 
 #[derive(Debug)]
