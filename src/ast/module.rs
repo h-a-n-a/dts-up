@@ -1,6 +1,5 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
-use dashmap::DashSet;
 use smol_str::SmolStr;
 use swc_atoms::JsWord;
 use swc_common::Mark;
@@ -76,8 +75,8 @@ impl Module {
     }
   }
 
-  pub fn pre_analyze_sub_modules(&mut self, swc_module: &swc_ecma_ast::Module) -> DashSet<SmolStr> {
-    let mut discovered_import: DashSet<SmolStr> = DashSet::new();
+  pub fn pre_analyze_sub_modules(&mut self, swc_module: &swc_ecma_ast::Module) -> HashSet<SmolStr> {
+    let mut discovered_import: HashSet<SmolStr> = Default::default();
 
     swc_module.body.iter().for_each(|module_item| {
       let mut discovered: Option<_> = None;

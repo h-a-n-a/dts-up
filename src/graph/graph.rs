@@ -1,8 +1,10 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::Ordering;
 use std::sync::{atomic::AtomicUsize, Arc, Mutex};
 
 use dashmap::DashSet;
+use petgraph::visit::EdgeRef;
+use petgraph::Direction;
 use smol_str::SmolStr;
 use tokio::sync::mpsc::{self, Sender};
 
@@ -10,7 +12,7 @@ use crate::{
   ast::{self, module::ModuleId},
   graph::{
     async_worker::{AsyncWorker, WorkerMessage},
-    ModuleEdge, ModuleGraph,
+    ModuleEdge, ModuleGraph, ModuleIndex,
   },
   result::Error,
   utils::resolve_id,
@@ -19,6 +21,8 @@ use crate::{
 #[derive(Debug)]
 pub struct Graph {
   resolved_entry: ModuleId,
+  entry_module_index: ModuleIndex,
+  sorted_modules: Vec<ModuleIndex>,
   module_graph: ModuleGraph,
   id_to_module: HashMap<ModuleId, ast::module::Module>,
 }
@@ -37,9 +41,18 @@ impl Graph {
 
     Self {
       resolved_entry,
+      sorted_modules: Default::default(),
+      entry_module_index: Default::default(),
       id_to_module: Default::default(),
       module_graph: ModuleGraph::new(),
     }
+  }
+
+  pub async fn build(&mut self) -> Result<(), Error> {
+    self.generate().await?;
+    self.sort_modules();
+
+    Ok(())
   }
 
   pub async fn generate(&mut self) -> Result<(), Error> {
@@ -92,7 +105,11 @@ impl Graph {
           NewModule(module) => {
             let id = module.id.clone();
             self.id_to_module.insert(id.clone(), module);
-            self.module_graph.get_or_add_module(id.clone());
+            let module_index = self.module_graph.get_or_add_module(id.clone());
+
+            if id == self.resolved_entry {
+              self.entry_module_index = module_index;
+            }
           }
           NewDependency(from_id, to_id, edge) => {
             let from_module_index = self.module_graph.get_or_add_module(from_id);
@@ -106,5 +123,48 @@ impl Graph {
     }
 
     Ok(())
+  }
+
+  pub fn sort_modules(&mut self) {
+    let mut sorted: Vec<ModuleIndex> = Default::default();
+    let mut stack = vec![self.entry_module_index];
+    let mut visited: HashSet<ModuleIndex> = Default::default();
+
+    while let Some(node_index) = stack.pop() {
+      if visited.contains(&node_index) {
+        sorted.push(node_index);
+        continue;
+      }
+
+      stack.push(node_index);
+      visited.insert(node_index);
+
+      let mut level_edges = self
+        .module_graph
+        .get_edges_directed(node_index, Direction::Outgoing)
+        .filter_map(|edge| {
+          let target_module_index = edge.target();
+          let weight = edge.weight();
+
+          if visited.contains(&target_module_index) {
+            return None;
+          }
+
+          if let ModuleEdge::Import(module_import) = weight {
+            return Some((target_module_index, module_import.index));
+          }
+
+          None
+        })
+        .collect::<Vec<_>>();
+
+      level_edges.sort_by_key(|e| e.1);
+
+      level_edges
+        .iter()
+        .for_each(|(module_index, _)| stack.push(module_index.clone()))
+    }
+
+    self.sorted_modules = sorted;
   }
 }

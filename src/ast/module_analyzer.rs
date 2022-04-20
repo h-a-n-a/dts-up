@@ -8,7 +8,7 @@ use swc_ecma_visit::{noop_visit_mut_type, VisitMut, VisitMutWith};
 use super::module::{ExportIdent, ImportIdent, Source};
 use super::{
   scope::{Definition, Scope, ScopeKind, VariableDeclaration},
-  symbol::{self, MarkExt},
+  symbol::{self, MarkExt, SyntaxContextExt},
   utils::{get_module_export_name, mark_module_export_name},
 };
 
@@ -306,6 +306,8 @@ impl VisitMut for ModuleAnalyzer {
     use swc_ecma_ast::TsTypeAliasDecl;
 
     let new_mark = symbol::new_mark();
+    n.id.span.ctxt = new_mark.as_ctxt();
+
     let ctxt = self.get_current_statement_mut().unwrap();
     ctxt.mark = Some(new_mark.clone());
 
@@ -414,44 +416,31 @@ impl VisitMut for ModuleAnalyzer {
         ctxt.is_export = true;
 
         match &mut export_decl.decl {
-          Decl::Var(v) => v.decls.iter_mut().for_each(|decl| match &mut decl.name {
-            Pat::Ident(ident) => {
-              let new_mark = symbol::new_mark();
-              ident.id.span.ctxt = new_mark.as_ctxt();
+          Decl::Var(v) => {
+            v.visit_mut_with(self);
 
-              if let Some(scope) = self.get_current_scope_mut() {
-                scope.add_variable_definition(
-                  ident.id.sym.clone(),
-                  VariableDeclaration::VariableDeclaration,
-                  new_mark,
-                );
+            v.decls.iter_mut().for_each(|decl| match &mut decl.name {
+              Pat::Ident(ident) => {
+                let new_mark = ident.id.span.ctxt.as_mark();
+
+                self.exports.push(ModuleExport::Name(ModuleExportName {
+                  exported_name: ident.id.sym.clone(),
+                  original_ident: ExportIdent::Name(ident.id.sym.clone(), None),
+                  mark: new_mark,
+                  src: None,
+                }));
               }
-
-              self.exports.push(ModuleExport::Name(ModuleExportName {
-                exported_name: ident.id.sym.clone(),
-                original_ident: ExportIdent::Name(ident.id.sym.clone(), None),
-                mark: new_mark,
-                src: None,
-              }));
-            }
-            p => {
-              log::warn!(
-                "[ModuleAnalyzer] Pattern type {:?} should not available in dts file",
-                p
-              )
-            }
-          }),
+              p => {
+                log::warn!(
+                  "[ModuleAnalyzer] Pattern type {:?} should not available in dts file",
+                  p
+                )
+              }
+            });
+          }
           Decl::Class(c) => {
-            let new_mark = symbol::new_mark();
-            c.ident.span.ctxt = new_mark.as_ctxt();
-
-            if let Some(scope) = self.get_current_scope_mut() {
-              scope.add_variable_definition(
-                c.ident.sym.clone(),
-                VariableDeclaration::ClassDeclaration,
-                new_mark,
-              );
-            }
+            c.visit_mut_with(self);
+            let new_mark = c.ident.span.ctxt.as_mark();
 
             self.exports.push(ModuleExport::Name(ModuleExportName {
               exported_name: c.ident.sym.clone(),
@@ -461,16 +450,8 @@ impl VisitMut for ModuleAnalyzer {
             }))
           }
           Decl::Fn(f) => {
-            let new_mark = symbol::new_mark();
-            f.ident.span.ctxt = new_mark.as_ctxt();
-
-            if let Some(scope) = self.get_current_scope_mut() {
-              scope.add_variable_definition(
-                f.ident.sym.clone(),
-                VariableDeclaration::FunctionDeclaration,
-                new_mark,
-              );
-            }
+            f.visit_mut_with(self);
+            let new_mark = f.ident.span.ctxt.as_mark();
 
             self.exports.push(ModuleExport::Name(ModuleExportName {
               exported_name: f.ident.sym.clone(),
@@ -480,16 +461,8 @@ impl VisitMut for ModuleAnalyzer {
             }))
           }
           Decl::TsInterface(t) => {
-            let new_mark = symbol::new_mark();
-            t.span.ctxt = new_mark.as_ctxt();
-
-            if let Some(scope) = self.get_current_scope_mut() {
-              scope.add_variable_definition(
-                t.id.sym.clone(),
-                VariableDeclaration::TsInterfaceDeclaration,
-                new_mark,
-              );
-            }
+            t.visit_mut_with(self);
+            let new_mark = t.id.span.ctxt.as_mark();
 
             self.exports.push(ModuleExport::Name(ModuleExportName {
               exported_name: t.id.sym.clone(),
@@ -499,16 +472,9 @@ impl VisitMut for ModuleAnalyzer {
             }))
           }
           Decl::TsTypeAlias(t) => {
-            let new_mark = symbol::new_mark();
-            t.span.ctxt = new_mark.as_ctxt();
+            t.visit_mut_with(self);
+            let new_mark = t.id.span.ctxt.as_mark();
 
-            if let Some(scope) = self.get_current_scope_mut() {
-              scope.add_variable_definition(
-                t.id.sym.clone(),
-                VariableDeclaration::TsTypeAliasDeclaration,
-                new_mark,
-              );
-            }
             self.exports.push(ModuleExport::Name(ModuleExportName {
               exported_name: t.id.sym.clone(),
               original_ident: ExportIdent::Name(t.id.sym.clone(), None),
@@ -517,16 +483,8 @@ impl VisitMut for ModuleAnalyzer {
             }))
           }
           Decl::TsEnum(t) => {
-            let new_mark = symbol::new_mark();
-            t.span.ctxt = new_mark.as_ctxt();
-
-            if let Some(scope) = self.get_current_scope_mut() {
-              scope.add_variable_definition(
-                t.id.sym.clone(),
-                VariableDeclaration::TsEnumDeclaration,
-                new_mark,
-              );
-            }
+            t.visit_mut_with(self);
+            let new_mark = t.id.span.ctxt.as_mark();
 
             self.exports.push(ModuleExport::Name(ModuleExportName {
               exported_name: t.id.sym.clone(),
@@ -591,6 +549,8 @@ impl VisitMut for ModuleAnalyzer {
           }
           ExportSpecifier::Default(default) => {}
         });
+
+        n.visit_mut_children_with(self);
       }
       ModuleDecl::ExportDefaultDecl(export_default) => {
         let ctxt = self.get_current_statement_mut().unwrap();
@@ -605,7 +565,9 @@ impl VisitMut for ModuleAnalyzer {
           original_ident: ExportIdent::Name(name.clone(), None),
           mark: new_mark,
           src: None,
-        }))
+        }));
+
+        n.visit_mut_children_with(self);
       }
       ModuleDecl::ExportAll(export_all) => {
         let ctxt = self.get_current_statement_mut().unwrap();
@@ -616,15 +578,15 @@ impl VisitMut for ModuleAnalyzer {
 
         self.exports.push(ModuleExport::All(ModuleExportAll {
           src: export_all.src.value.clone(),
-        }))
+        }));
+
+        n.visit_mut_children_with(self);
       }
       ModuleDecl::ExportDefaultExpr(export_default_expr) => {
         log::warn!("[ModuleAnalyzer] `ExportDefaultExpr` should not exist in dts files");
       }
       _ => (),
     }
-
-    n.visit_mut_children_with(self);
   }
 
   fn visit_mut_ts_type(&mut self, n: &mut swc_ecma_ast::TsType) {

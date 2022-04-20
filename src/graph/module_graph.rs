@@ -17,7 +17,8 @@ pub struct ModuleEdgeReExport {}
 #[derive(Debug)]
 pub enum ModuleEdge {
   Import(ModuleEdgeImport),
-  DynamicImport,
+  // currently not supported
+  // DynamicImport,
   Export,
 }
 
@@ -25,7 +26,7 @@ pub type ModuleIndex = NodeIndex;
 
 #[derive(Debug)]
 pub struct ModuleGraph {
-  inner: Graph<ModuleId, ModuleEdge, Directed, DefaultIx>,
+  pub inner: Graph<ModuleId, ModuleEdge, Directed, DefaultIx>,
   module_id_to_index: HashMap<ModuleId, ModuleIndex>,
 }
 
@@ -65,11 +66,11 @@ impl ModuleGraph {
     self.inner.add_edge(from_module_idx, to_module_idx, edge);
   }
 
-  pub fn get_module_id_by_index(&mut self, module_index: ModuleIndex) -> ModuleId {
+  pub fn get_module_id_by_index(&self, module_index: ModuleIndex) -> ModuleId {
     self.inner[module_index].clone()
   }
 
-  pub fn get_module_index_by_id(&mut self, module_id: ModuleId) -> Option<ModuleIndex> {
+  pub fn get_module_index_by_id(&self, module_id: ModuleId) -> Option<ModuleIndex> {
     self
       .module_id_to_index
       .get(&module_id)
