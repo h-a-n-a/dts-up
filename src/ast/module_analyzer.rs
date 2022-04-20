@@ -56,13 +56,31 @@ pub enum ModuleExport {
   All(ModuleExportAll),
 }
 
+/// StatementContexts will be used to create real statements
+#[derive(Clone, Debug, Default)]
+pub struct StatementContext {
+  // In best practices `StatementContext` should be split to enums to avoid problematic `unwraps` for `mark`
+  pub is_import: bool,
+  pub is_export: bool,
+
+  pub reads: HashSet<Mark>,
+
+  // Tree-shaking includes statement with its mark
+  // `None` if `is_import` or `is_export` equals to `true`
+  pub mark: Option<Mark>,
+}
+
 #[derive(Debug)]
 pub struct ModuleAnalyzer {
-  pub scope: Vec<Scope>,
-  pub current_import_index: u32,
+  scope: Vec<Scope>,
+
+  current_import_index: u32,
+  current_statement_index: u32,
+
   /// LocalName is always available for imports
   pub imports: HashMap<LocalName, ModuleImport>,
   pub exports: Vec<ModuleExport>,
+  pub statement_context: Vec<StatementContext>,
 }
 
 impl ModuleAnalyzer {
@@ -70,37 +88,74 @@ impl ModuleAnalyzer {
     Self {
       scope: vec![Scope::new(ScopeKind::TypeScope)],
       current_import_index: Default::default(),
+      current_statement_index: Default::default(),
       imports: Default::default(),
       exports: Default::default(),
+      statement_context: Default::default(),
     }
   }
 
-  pub fn push_scope(&mut self, scope: Scope) {
+  fn push_scope(&mut self, scope: Scope) {
     self.scope.push(scope);
   }
 
-  pub fn pop_scope(&mut self) {
+  fn pop_scope(&mut self) {
     self.scope.pop();
   }
 
-  pub fn advance_import_index(&mut self) {
+  fn advance_statement(&mut self) {
+    self.current_statement_index += 1;
+  }
+
+  fn get_current_statement(&self) -> Option<&StatementContext> {
+    self
+      .statement_context
+      .get(self.current_statement_index as usize)
+  }
+
+  // It seems not necessary since we've already done this in `add_variable_read`
+  // fn sync_current_scope_reads_to_statement(&mut self) {
+  //   let scope_reads = self.get_current_scope().unwrap().get_reads().clone();
+  //   let ctxt = self.get_current_statement_mut().unwrap();
+  //   ctxt.reads.extend(scope_reads);
+  // }
+
+  fn get_current_statement_mut(&mut self) -> Option<&mut StatementContext> {
+    self
+      .statement_context
+      .get_mut(self.current_statement_index as usize)
+  }
+
+  fn pop_scope_on_type_param(&mut self) {
+    if matches!(
+      self.get_current_scope_kind(),
+      Some(&ScopeKind::TsTypeParameter)
+    ) {
+      self.pop_scope();
+    }
+  }
+
+  fn advance_import_index(&mut self) {
     self.current_import_index += 1;
   }
 
-  pub fn get_current_scope(&self) -> Option<&Scope> {
+  fn get_current_scope(&self) -> Option<&Scope> {
     self.scope.last()
   }
 
-  pub fn get_current_scope_mut(&mut self) -> Option<&mut Scope> {
+  fn get_current_scope_mut(&mut self) -> Option<&mut Scope> {
     self.scope.last_mut()
   }
 
-  pub fn get_current_scope_kind(&self) -> Option<&ScopeKind> {
+  fn get_current_scope_kind(&self) -> Option<&ScopeKind> {
     self.scope.last().map(|s| &s.kind)
   }
 
-  pub fn add_variable_read(&mut self, name: &JsWord) -> Option<Mark> {
+  fn add_variable_read(&mut self, name: &JsWord) -> Option<Mark> {
     if let Some(mark) = self.get_mark_by_name(name) {
+      let ctxt = self.get_current_statement_mut().unwrap();
+      ctxt.reads.insert(mark.clone());
+
       let scope = self.get_current_scope_mut().unwrap();
       scope.add_variable_read(mark.clone());
 
@@ -112,16 +167,17 @@ impl ModuleAnalyzer {
     None
   }
 
-  pub fn pop_scope_on_type_param(&mut self) {
-    if matches!(
-      self.get_current_scope_kind(),
-      Some(&ScopeKind::TsTypeParameter)
-    ) {
-      self.pop_scope();
-    }
+  fn add_variable_definition(
+    &mut self,
+    name: JsWord,
+    definition_type: VariableDeclaration,
+    new_mark: Mark,
+  ) {
+    let scope = self.get_current_scope_mut().unwrap();
+    scope.add_variable_definition(name, definition_type, new_mark);
   }
 
-  pub fn get_top_level_names(&self) -> Vec<JsWord> {
+  fn get_top_level_names(&self) -> Vec<JsWord> {
     let mut top_level_names = self.imports.keys().cloned().collect::<Vec<JsWord>>();
 
     if let Some(top_level_scope) = self.scope.first() {
@@ -150,7 +206,7 @@ impl ModuleAnalyzer {
     })
   }
 
-  pub fn add_import(&mut self, import_decl: &mut swc_ecma_ast::ImportDecl) {
+  fn add_import(&mut self, import_decl: &mut swc_ecma_ast::ImportDecl) {
     use swc_ecma_ast::{ImportSpecifier, ModuleExportName};
 
     let index = self.current_import_index;
@@ -220,11 +276,21 @@ impl ModuleAnalyzer {
 }
 
 impl VisitMut for ModuleAnalyzer {
-  // noop_visit_mut_type!();
+  fn visit_mut_module(&mut self, n: &mut swc_ecma_ast::Module) {
+    self.statement_context = vec![Default::default(); n.body.len()];
+    n.visit_mut_children_with(self);
+  }
+
+  fn visit_mut_module_item(&mut self, n: &mut swc_ecma_ast::ModuleItem) {
+    n.visit_mut_children_with(self);
+    self.advance_statement();
+  }
 
   fn visit_mut_fn_decl(&mut self, n: &mut swc_ecma_ast::FnDecl) {
     n.function.type_params.visit_mut_with(self);
     // n.visit_mut_children_with(self);
+
+    self.pop_scope_on_type_param();
   }
 
   fn visit_mut_class_decl(&mut self, n: &mut swc_ecma_ast::ClassDecl) {
@@ -233,6 +299,29 @@ impl VisitMut for ModuleAnalyzer {
 
   fn visit_mut_ts_type_ann(&mut self, n: &mut swc_ecma_ast::TsTypeAnn) {
     // already included in `TsType` visitor
+    n.visit_mut_children_with(self);
+  }
+
+  fn visit_mut_ts_type_alias_decl(&mut self, n: &mut swc_ecma_ast::TsTypeAliasDecl) {
+    use swc_ecma_ast::TsTypeAliasDecl;
+
+    let new_mark = symbol::new_mark();
+    let ctxt = self.get_current_statement_mut().unwrap();
+    ctxt.mark = Some(new_mark.clone());
+
+    self.add_variable_definition(
+      n.id.sym.clone(),
+      VariableDeclaration::TsTypeAliasDeclaration,
+      new_mark,
+    );
+
+    n.type_params.visit_mut_with(self);
+
+    self.push_scope(Scope::new(ScopeKind::TypeScope));
+    n.type_ann.visit_mut_with(self);
+    self.pop_scope();
+
+    self.pop_scope_on_type_param();
   }
 
   fn visit_mut_ts_type_element(&mut self, n: &mut swc_ecma_ast::TsTypeElement) {
@@ -249,11 +338,14 @@ impl VisitMut for ModuleAnalyzer {
 
   fn visit_mut_ts_interface_decl(&mut self, n: &mut swc_ecma_ast::TsInterfaceDecl) {
     n.type_params.visit_mut_with(self);
-    let scope = self.get_current_scope_mut().unwrap();
 
     let new_mark = symbol::new_mark();
     n.id.span.ctxt = new_mark.as_ctxt();
 
+    let ctxt = self.get_current_statement_mut().unwrap();
+    ctxt.mark = Some(new_mark.clone());
+
+    let scope = self.get_current_scope_mut().unwrap();
     scope.add_variable_definition(
       n.id.sym.clone(),
       VariableDeclaration::TsInterfaceDeclaration,
@@ -267,7 +359,7 @@ impl VisitMut for ModuleAnalyzer {
       match extend.expr.as_mut() {
         Expr::Ident(ident) => {
           let mut mark = self.add_variable_read(&ident.sym);
-          if let Some(mark) = mark.take() {
+          if let Some(mark) = mark.as_ref() {
             ident.span.ctxt = mark.as_ctxt();
           }
         }
@@ -277,7 +369,7 @@ impl VisitMut for ModuleAnalyzer {
       }
     });
 
-    n.body.visit_mut_children_with(self);
+    n.body.visit_mut_with(self);
 
     self.pop_scope();
     self.pop_scope_on_type_param();
@@ -309,10 +401,17 @@ impl VisitMut for ModuleAnalyzer {
     match n {
       ModuleDecl::Import(import_decl) => {
         self.add_import(import_decl);
+
+        let ctxt = self.get_current_statement_mut().unwrap();
+        ctxt.is_import = true;
+
         self.advance_import_index();
       }
       ModuleDecl::ExportDecl(export_decl) => {
         use swc_ecma_ast::{Decl, Pat};
+
+        let ctxt = self.get_current_statement_mut().unwrap();
+        ctxt.is_export = true;
 
         match &mut export_decl.decl {
           Decl::Var(v) => v.decls.iter_mut().for_each(|decl| match &mut decl.name {
@@ -494,6 +593,9 @@ impl VisitMut for ModuleAnalyzer {
         });
       }
       ModuleDecl::ExportDefaultDecl(export_default) => {
+        let ctxt = self.get_current_statement_mut().unwrap();
+        ctxt.is_export = true;
+
         let name = js_word!("default");
         let new_mark = symbol::new_mark();
         export_default.span.ctxt = new_mark.as_ctxt();
@@ -506,6 +608,9 @@ impl VisitMut for ModuleAnalyzer {
         }))
       }
       ModuleDecl::ExportAll(export_all) => {
+        let ctxt = self.get_current_statement_mut().unwrap();
+        ctxt.is_export = true;
+
         let new_mark = symbol::new_mark();
         export_all.span.ctxt = new_mark.as_ctxt();
 
@@ -543,7 +648,7 @@ impl VisitMut for ModuleAnalyzer {
         match &mut t.type_name {
           TsEntityName::Ident(ident) => {
             let mut mark = self.add_variable_read(&ident.sym);
-            if let Some(mark) = mark.take() {
+            if let Some(mark) = mark.as_ref() {
               ident.span.ctxt = mark.as_ctxt();
             }
           }
@@ -554,21 +659,9 @@ impl VisitMut for ModuleAnalyzer {
       TsType::TsTypeQuery(t) => {}
 
       TsType::TsTypeLit(t) => {
-        // TODO: maybe we should handle it in `ts type element`
-        // t.members.iter_mut().for_each(|member| {
-        //   use swc_ecma_ast::TsTypeElement;
-        //   match member {
-        //     TsTypeElement::TsGetterSignature(t) => {
-        //       t.key;
-        //     }
-        //     TsTypeElement::TsCallSignatureDecl(t) => {}
-        //     TsTypeElement::TsConstructSignatureDecl(t) => {}
-        //     TsTypeElement::TsPropertySignature(t) => {}
-        //     TsTypeElement::TsSetterSignature(t) => {}
-        //     TsTypeElement::TsMethodSignature(t) => {}
-        //     TsTypeElement::TsIndexSignature(t) => {}
-        //   }
-        // });
+        self.push_scope(Scope::new(ScopeKind::TypeScope));
+        t.visit_mut_children_with(self);
+        self.pop_scope();
       }
 
       TsType::TsArrayType(t) => {

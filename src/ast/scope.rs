@@ -45,6 +45,12 @@ pub struct Scope {
   reads: HashSet<Mark>,
 }
 
+impl Default for Scope {
+  fn default() -> Self {
+    Self::new(ScopeKind::TypeScope)
+  }
+}
+
 impl Scope {
   pub fn new(kind: ScopeKind) -> Self {
     Self {
@@ -90,5 +96,9 @@ impl Scope {
 
   pub fn add_variable_read(&mut self, variable_mark: Mark) {
     self.reads.insert(variable_mark);
+  }
+
+  pub fn get_reads(&self) -> &HashSet<Mark> {
+    &self.reads
   }
 }

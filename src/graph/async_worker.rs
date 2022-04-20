@@ -63,8 +63,12 @@ impl AsyncWorker {
     None
   }
 
-  fn discover_module(&mut self, module: &mut ast::module::Module) {
-    let sub_modules = module.pre_analyze_sub_modules();
+  fn discover_module(
+    &mut self,
+    module: &mut ast::module::Module,
+    swc_module: &swc_ecma_ast::Module,
+  ) {
+    let sub_modules = module.pre_analyze_sub_modules(swc_module);
 
     sub_modules.iter().for_each(|module_id| {
       let module_id = resolve_id(
@@ -139,17 +143,17 @@ impl AsyncWorker {
 
     if let Some(resolved_id) = self.fetch_job() {
       log::debug!("[AsyncWorker]: running job {}", resolved_id);
-      let swc_module = ast::parse::parse_file(resolved_id.clone()).await.unwrap();
+      let mut swc_module = ast::parse::parse_file(resolved_id.clone()).await.unwrap();
 
-      let mut module = module::Module::from_swc_module(module::ModuleOptions {
+      let mut module = module::Module::new(module::ModuleOptions {
         id: resolved_id.clone(),
         is_entry: self.resolved_entries.contains(&resolved_id),
-        swc_module,
       });
 
-      self.discover_module(&mut module);
+      self.discover_module(&mut module, &swc_module);
 
-      let module_analyzer = module.analyze();
+      let module_analyzer = module.analyze(&mut swc_module);
+      module.generate_statements_from_ctxt(swc_module, module_analyzer.statement_context);
 
       self
         .add_import_graph(&module, &module_analyzer.imports)

@@ -8,8 +8,10 @@ use tokio::sync::mpsc::{self, Sender};
 
 use crate::{
   ast::{self, module::ModuleId},
-  async_worker::{AsyncWorker, WorkerMessage},
-  graph::{ModuleEdge, ModuleGraph},
+  graph::{
+    async_worker::{AsyncWorker, WorkerMessage},
+    ModuleEdge, ModuleGraph,
+  },
   result::Error,
   utils::resolve_id,
 };

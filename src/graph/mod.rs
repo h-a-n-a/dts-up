@@ -1,3 +1,4 @@
+mod async_worker;
 pub(crate) mod graph;
 pub(crate) mod module_graph;
 

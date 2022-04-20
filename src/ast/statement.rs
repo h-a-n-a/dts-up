@@ -1,22 +1,55 @@
-use dashmap::{DashMap, DashSet};
+use std::collections::HashSet;
+
 use swc_common::Mark;
 use swc_ecma_ast::ModuleItem;
 
 #[derive(Debug)]
-pub struct Statement {
-  pub node: ModuleItem,
-  pub included: bool,
-  pub reads: DashSet<Mark>,
-  pub writes: DashSet<Mark>,
+pub enum Statement {
+  DeclStatement(DeclStatement),
+  ImportStatement(ImportStatement),
+  ExportStatement(ExportStatement),
 }
 
-impl Statement {
+#[derive(Debug)]
+pub struct ImportStatement {
+  pub node: ModuleItem,
+}
+
+impl ImportStatement {
+  pub fn new(node: ModuleItem) -> Self {
+    Self { node }
+  }
+}
+
+#[derive(Debug)]
+pub struct ExportStatement {
+  pub node: ModuleItem,
+}
+
+impl ExportStatement {
+  pub fn new(node: ModuleItem) -> Self {
+    Self { node }
+  }
+}
+
+#[derive(Debug)]
+pub struct DeclStatement {
+  pub node: ModuleItem,
+  pub included: bool,
+  pub reads: HashSet<Mark>,
+
+  // `tree-shaking` is supported by including this mark
+  // `mark` equals to the mark of node's declaration's ident
+  pub mark: Mark,
+}
+
+impl DeclStatement {
   pub fn new(node: ModuleItem) -> Self {
     Self {
       node,
       included: false,
       reads: Default::default(),
-      writes: Default::default(),
+      mark: Default::default(),
     }
   }
 }

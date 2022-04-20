@@ -7,7 +7,10 @@ use swc_common::Mark;
 use swc_ecma_ast::{ImportSpecifier, ModuleDecl, ModuleItem, TsModuleRef};
 use swc_ecma_visit::VisitMutWith;
 
-use super::{module_analyzer::ModuleAnalyzer, statement::Statement};
+use super::{
+  module_analyzer::{ModuleAnalyzer, StatementContext},
+  statement::Statement,
+};
 use crate::utils::resolve_id;
 
 pub type ModuleId = SmolStr;
@@ -53,33 +56,30 @@ pub struct Module {
 
   /// sources(from import or export statement) to avoid resolving a module twice
   pub src_to_resolved_id: HashMap<JsWord, SmolStr>,
-
-  pub swc_module: swc_ecma_ast::Module,
 }
 
 pub struct ModuleOptions {
-  pub swc_module: swc_ecma_ast::Module,
   pub id: ModuleId,
   pub is_entry: bool,
 }
 
 impl Module {
-  pub fn from_swc_module(options: ModuleOptions) -> Self {
+  pub fn new(options: ModuleOptions) -> Self {
     Self {
-      swc_module: options.swc_module,
       id: options.id,
       is_entry: options.is_entry,
-      statements: Default::default(),
+      // Placeholder for type only
+      statements: Vec::with_capacity(0),
       local_exports: Default::default(),
       src_to_resolved_id: Default::default(),
       exports: Default::default(),
     }
   }
 
-  pub fn pre_analyze_sub_modules(&mut self) -> DashSet<SmolStr> {
+  pub fn pre_analyze_sub_modules(&mut self, swc_module: &swc_ecma_ast::Module) -> DashSet<SmolStr> {
     let mut discovered_import: DashSet<SmolStr> = DashSet::new();
 
-    self.swc_module.body.iter().for_each(|module_item| {
+    swc_module.body.iter().for_each(|module_item| {
       let mut discovered: Option<_> = None;
       match module_item {
         ModuleItem::ModuleDecl(module_decl) => match module_decl {
@@ -125,10 +125,41 @@ impl Module {
     discovered_import
   }
 
-  pub fn analyze(&mut self) -> ModuleAnalyzer {
+  pub fn analyze(&mut self, swc_module: &mut swc_ecma_ast::Module) -> ModuleAnalyzer {
     let mut module_analyzer = ModuleAnalyzer::new();
-    self.swc_module.visit_mut_with(&mut module_analyzer);
+    swc_module.visit_mut_with(&mut module_analyzer);
+
     println!("{:#?}", module_analyzer);
     module_analyzer
+  }
+
+  pub fn generate_statements_from_ctxt(
+    &mut self,
+    swc_module: swc_ecma_ast::Module,
+    statement_context: Vec<StatementContext>,
+  ) {
+    use super::statement::{DeclStatement, ExportStatement, ImportStatement};
+    let statements = swc_module
+      .body
+      .into_iter()
+      .zip(statement_context.into_iter())
+      .map(|(swc_node, ctxt)| {
+        if ctxt.is_import {
+          Statement::ImportStatement(ImportStatement::new(swc_node))
+        } else if ctxt.is_export {
+          Statement::ExportStatement(ExportStatement::new(swc_node))
+        } else {
+          let mut statement = DeclStatement::new(swc_node);
+          statement.reads = ctxt.reads;
+          statement.mark = ctxt.mark.expect(
+            "[Module] `Mark` is supposed to be available in `StatementCtxt`, please file an issue",
+          );
+
+          Statement::DeclStatement(statement)
+        }
+      })
+      .collect::<Vec<_>>();
+
+    self.statements = statements;
   }
 }
