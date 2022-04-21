@@ -25,7 +25,7 @@ pub enum ImportIdent {
   Namespace,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Exports {
   Name(ModuleExportName),
   Namespace(ModuleExportNamespace),
@@ -61,8 +61,7 @@ impl Module {
     Self {
       id: options.id,
       is_entry: options.is_entry,
-      // Placeholder for type only
-      statements: Vec::with_capacity(0),
+      statements: Default::default(),
       local_exports: Default::default(),
       src_to_resolved_id: Default::default(),
       exports: Default::default(),
@@ -85,7 +84,6 @@ impl Module {
             }
           }
           ModuleDecl::ExportAll(export_all) => {
-            println!("export all {:#?}", export_all);
             discovered = Some(export_all.src.value.clone());
           }
           ModuleDecl::TsImportEquals(ts_import_decl) => {

@@ -1,7 +1,8 @@
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::Ordering;
-use std::sync::atomic::Ordering::SeqCst;
-use std::sync::{atomic::AtomicUsize, Arc, Mutex};
+use std::sync::{
+  atomic::{AtomicUsize, Ordering},
+  Arc, Mutex,
+};
 
 use dashmap::DashSet;
 use petgraph::{visit::EdgeRef, Direction};
@@ -52,7 +53,7 @@ impl Graph {
   pub async fn build(&mut self) -> Result<(), Error> {
     self.generate().await?;
     self.sort_modules();
-    self.link_exports();
+    self.link_export_all();
 
     Ok(())
   }
@@ -127,14 +128,12 @@ impl Graph {
     Ok(())
   }
 
-  fn link_exports(&mut self) {
+  fn link_export_all(&mut self) {
     self
       .get_sorted_modules()
       .clone()
       .into_iter()
       .for_each(|module_index| {
-        let module = self.get_module_by_module_index_mut(&module_index);
-        println!("module id {}", module.id);
         let source_module_ids = self
           .module_graph
           .get_edges_directed(module_index, Direction::Incoming)
@@ -146,11 +145,40 @@ impl Graph {
           })
           .collect::<Vec<_>>();
 
-        let source_modules = source_module_ids
-          .into_iter()
-          .map(|(module_id, edge)| (self.id_to_module.get_mut(&module_id).unwrap(), edge))
-          .collect::<Vec<_>>();
-        println!("{:#?}", source_modules);
+        source_module_ids.into_iter().for_each(|(module_id, edge)| {
+          let module_exports = self
+            .get_module_by_module_index_mut(&module_index)
+            .exports
+            .clone();
+          let target_module_id = self.get_module_by_module_index(&module_index).id.clone();
+          let dep_module = self.id_to_module.get_mut(&module_id).unwrap();
+
+          match edge {
+            ModuleEdge::ExportAll(_) => {
+              module_exports
+                .into_iter()
+                .for_each(|(local_name, module_export)| {
+                  log::debug!(
+                    "[Graph] linking export all with identifier: `{}` from {} to {}",
+                    local_name,
+                    target_module_id,
+                    module_id
+                  );
+
+                  match dep_module.exports.entry(local_name.clone()) {
+                    std::collections::hash_map::Entry::Vacant(v) => {
+                      v.insert(module_export);
+                    }
+                    std::collections::hash_map::Entry::Occupied(o) => {
+                      // TODO: should we eliminate the panic if local_name is defined at the same statement?
+                      panic!("[Graph] duplicated key detected: {}", local_name);
+                    }
+                  }
+                })
+            }
+            _ => (),
+          }
+        })
       })
   }
 

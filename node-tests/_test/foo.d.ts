@@ -1,3 +1,3 @@
-import type { baz } from "./baz"
+// export type { baz } from "./baz"
 export * from "./bar"
-export type Prop = boolean
+export type foo = boolean

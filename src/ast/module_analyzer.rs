@@ -14,7 +14,7 @@ use super::{
 
 type LocalName = JsWord;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ExportOriginalIdent {
   // source of export ident, only available when exporting with `export {} from ".."`
   Name(LocalName, Option<Source>),
@@ -36,7 +36,7 @@ pub struct ModuleImport {
   pub src: Source,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ModuleExportName {
   pub exported_name: LocalName,
   pub original_ident: ExportOriginalIdent,
@@ -47,7 +47,7 @@ pub struct ModuleExportName {
   pub index: Option<u32>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ModuleExportNamespace {
   pub index: u32,
   pub exported_name: LocalName,

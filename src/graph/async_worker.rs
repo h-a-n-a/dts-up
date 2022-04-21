@@ -8,7 +8,8 @@ use smol_str::SmolStr;
 use swc_atoms::JsWord;
 use tokio::sync::mpsc::Sender;
 
-use crate::ast::module::{LocalName, ModuleId};
+use crate::ast::module::{Exports, LocalName, ModuleId};
+use crate::ast::module_analyzer::{ExportOriginalIdent, ModuleExportName};
 use crate::ast::{
   self,
   module_analyzer::{ModuleExport, ModuleImport},
@@ -184,6 +185,24 @@ impl AsyncWorker {
         .add_export_graph(&module, &module_analyzer.exports)
         .await;
 
+      module_analyzer
+        .exports
+        .iter()
+        .for_each(|module_export| match module_export {
+          ModuleExport::Name(n) => {
+            module
+              .exports
+              .insert(n.exported_name.clone(), Exports::Name(n.clone()));
+          }
+          ModuleExport::Namespace(n) => {
+            module
+              .exports
+              .insert(n.exported_name.clone(), Exports::Namespace(n.clone()));
+          }
+          ModuleExport::All(n) => {
+            // `export *`s are linked later
+          }
+        });
       module.local_exports = module_analyzer.exports;
 
       self
