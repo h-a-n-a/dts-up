@@ -1,13 +1,13 @@
 use std::collections::HashSet;
 
 use swc_common::Mark;
-use swc_ecma_ast::ModuleItem;
+use swc_ecma_ast::{ExportSpecifier, ModuleDecl, ModuleItem, NamedExport};
 
 #[derive(Debug)]
 pub enum Statement {
   DeclStatement(DeclStatement),
   ImportStatement(ImportStatement),
-  ExportStatement(ExportStatement),
+  ExportStatementNonDecl(ExportStatementNonDecl),
 }
 
 #[derive(Debug)]
@@ -22,11 +22,11 @@ impl ImportStatement {
 }
 
 #[derive(Debug)]
-pub struct ExportStatement {
+pub struct ExportStatementNonDecl {
   pub node: ModuleItem,
 }
 
-impl ExportStatement {
+impl ExportStatementNonDecl {
   pub fn new(node: ModuleItem) -> Self {
     Self { node }
   }
@@ -37,6 +37,9 @@ pub struct DeclStatement {
   pub node: ModuleItem,
   pub included: bool,
   pub reads: HashSet<Mark>,
+  // This includes export named declarations / export default declarations / export namespaced declarations,
+  // since these should be transformed
+  pub is_export_decl: bool,
 
   // `tree-shaking` is supported by including this mark
   // `mark` equals to the mark of node's declaration's ident
@@ -48,8 +51,42 @@ impl DeclStatement {
     Self {
       node,
       included: false,
+      is_export_decl: Default::default(),
       reads: Default::default(),
       mark: Default::default(),
+    }
+  }
+
+  pub fn validate_node_type(&self) {
+    log::debug!(
+      "[DeclStatement] validating node {:?} with is_export_decl set to {}...",
+      self.node,
+      self.is_export_decl
+    );
+
+    if matches!(
+      self.node,
+      ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(_))
+        | ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultDecl(_))
+    ) {
+      assert!(
+        self.is_export_decl,
+        "[Statement]: failed to validate node type of {:#?} with `is_export_decl` {}",
+        self.node, self.is_export_decl
+      )
+    }
+
+    if let ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(export_named)) = &self.node {
+      assert_eq!(
+        matches!(
+          export_named.specifiers.get(0),
+          Some(ExportSpecifier::Namespace(_))
+        ),
+        self.is_export_decl,
+        "[Statement]: failed to validate node type of {:#?} with `is_export_decl` {}",
+        self.node,
+        self.is_export_decl
+      )
     }
   }
 }

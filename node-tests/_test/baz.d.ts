@@ -1,1 +1,1 @@
-declare const baz: void;
+export type baz = void;

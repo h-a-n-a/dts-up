@@ -5,7 +5,7 @@ use swc_common::Mark;
 use swc_ecma_ast::{Decl, ExportSpecifier, Pat, TsType, TsTypeElement};
 use swc_ecma_visit::{noop_visit_mut_type, VisitMut, VisitMutWith};
 
-use super::module::{ExportIdent, ImportIdent, Source};
+use super::module::{ImportIdent, Source};
 use super::{
   scope::{Definition, Scope, ScopeKind, VariableDeclaration},
   symbol::{self, MarkExt, SyntaxContextExt},
@@ -13,6 +13,14 @@ use super::{
 };
 
 type LocalName = JsWord;
+
+#[derive(Debug)]
+pub enum ExportOriginalIdent {
+  // source of export ident, only available when exporting with `export {} from ".."`
+  Name(LocalName, Option<Source>),
+  Namespace,
+  All,
+}
 
 #[derive(Debug)]
 pub struct ModuleImport {
@@ -25,27 +33,32 @@ pub struct ModuleImport {
   /// `a` in `{ a as b }`
   pub original_ident: ImportIdent,
   /// Source(of importee) may be the same since we will split single statement with multiple variables into different imports for **tree-shaking**
-  pub src: JsWord,
+  pub src: Source,
 }
 
 #[derive(Debug)]
 pub struct ModuleExportName {
   pub exported_name: LocalName,
-  pub original_ident: ExportIdent,
+  pub original_ident: ExportOriginalIdent,
   pub mark: Mark,
+  // without src: `export { name }`, with src: `export { name } from "./foo"`
   pub src: Option<Source>,
+  // index for locating import/export order, only available for situation in which `src` is `some`
+  pub index: Option<u32>,
 }
 
 #[derive(Debug)]
 pub struct ModuleExportNamespace {
+  pub index: u32,
   pub exported_name: LocalName,
-  pub original_ident: ExportIdent,
+  pub original_ident: ExportOriginalIdent,
   pub mark: Mark,
   pub src: Source,
 }
 
 #[derive(Debug)]
 pub struct ModuleExportAll {
+  pub index: u32,
   pub src: Source,
 }
 
@@ -59,9 +72,15 @@ pub enum ModuleExport {
 /// StatementContexts will be used to create real statements
 #[derive(Clone, Debug, Default)]
 pub struct StatementContext {
+  index: u32,
+
   // In best practices `StatementContext` should be split to enums to avoid problematic `unwraps` for `mark`
   pub is_import: bool,
   pub is_export: bool,
+  // IMPORTANT:
+  // export declarations like `export declare type Foo = string` or export namespaced are declarations,
+  // which is supposed to be transformed(`export declare` -> `declare`, or `export * as foo from "./foo"` -> declare namespace "foo") and generated
+  pub is_export_decl: bool,
 
   pub reads: HashSet<Mark>,
 
@@ -211,9 +230,10 @@ impl ModuleAnalyzer {
 
     let index = self.current_import_index;
     let src = import_decl.src.value.clone();
-    let mut original_idents: Vec<ImportIdent> = Vec::with_capacity(import_decl.specifiers.len());
-    let mut local_names: Vec<JsWord> = Vec::with_capacity(import_decl.specifiers.len());
-    let mut marks: Vec<Mark> = Vec::with_capacity(import_decl.specifiers.len());
+    let len = import_decl.specifiers.len();
+    let mut original_idents: Vec<ImportIdent> = Vec::with_capacity(len);
+    let mut local_names: Vec<JsWord> = Vec::with_capacity(len);
+    let mut marks: Vec<Mark> = Vec::with_capacity(len);
 
     import_decl.specifiers.iter_mut().for_each(|s| match s {
       ImportSpecifier::Named(s) => {
@@ -278,6 +298,14 @@ impl ModuleAnalyzer {
 impl VisitMut for ModuleAnalyzer {
   fn visit_mut_module(&mut self, n: &mut swc_ecma_ast::Module) {
     self.statement_context = vec![Default::default(); n.body.len()];
+    self
+      .statement_context
+      .iter_mut()
+      .enumerate()
+      .for_each(|(index, ctxt)| {
+        ctxt.index = index as u32;
+      });
+
     n.visit_mut_children_with(self);
   }
 
@@ -285,6 +313,8 @@ impl VisitMut for ModuleAnalyzer {
     n.visit_mut_children_with(self);
     self.advance_statement();
   }
+
+  // TODO: support more declarations
 
   fn visit_mut_fn_decl(&mut self, n: &mut swc_ecma_ast::FnDecl) {
     n.function.type_params.visit_mut_with(self);
@@ -414,6 +444,7 @@ impl VisitMut for ModuleAnalyzer {
 
         let ctxt = self.get_current_statement_mut().unwrap();
         ctxt.is_export = true;
+        ctxt.is_export_decl = true;
 
         match &mut export_decl.decl {
           Decl::Var(v) => {
@@ -425,9 +456,10 @@ impl VisitMut for ModuleAnalyzer {
 
                 self.exports.push(ModuleExport::Name(ModuleExportName {
                   exported_name: ident.id.sym.clone(),
-                  original_ident: ExportIdent::Name(ident.id.sym.clone(), None),
+                  original_ident: ExportOriginalIdent::Name(ident.id.sym.clone(), None),
                   mark: new_mark,
                   src: None,
+                  index: None,
                 }));
               }
               p => {
@@ -444,9 +476,10 @@ impl VisitMut for ModuleAnalyzer {
 
             self.exports.push(ModuleExport::Name(ModuleExportName {
               exported_name: c.ident.sym.clone(),
-              original_ident: ExportIdent::Name(c.ident.sym.clone(), None),
+              original_ident: ExportOriginalIdent::Name(c.ident.sym.clone(), None),
               mark: new_mark,
               src: None,
+              index: None,
             }))
           }
           Decl::Fn(f) => {
@@ -455,9 +488,10 @@ impl VisitMut for ModuleAnalyzer {
 
             self.exports.push(ModuleExport::Name(ModuleExportName {
               exported_name: f.ident.sym.clone(),
-              original_ident: ExportIdent::Name(f.ident.sym.clone(), None),
+              original_ident: ExportOriginalIdent::Name(f.ident.sym.clone(), None),
               mark: new_mark,
               src: None,
+              index: None,
             }))
           }
           Decl::TsInterface(t) => {
@@ -466,9 +500,10 @@ impl VisitMut for ModuleAnalyzer {
 
             self.exports.push(ModuleExport::Name(ModuleExportName {
               exported_name: t.id.sym.clone(),
-              original_ident: ExportIdent::Name(t.id.sym.clone(), None),
+              original_ident: ExportOriginalIdent::Name(t.id.sym.clone(), None),
               mark: new_mark,
               src: None,
+              index: None,
             }))
           }
           Decl::TsTypeAlias(t) => {
@@ -477,9 +512,10 @@ impl VisitMut for ModuleAnalyzer {
 
             self.exports.push(ModuleExport::Name(ModuleExportName {
               exported_name: t.id.sym.clone(),
-              original_ident: ExportIdent::Name(t.id.sym.clone(), None),
+              original_ident: ExportOriginalIdent::Name(t.id.sym.clone(), None),
               mark: new_mark,
               src: None,
+              index: None,
             }))
           }
           Decl::TsEnum(t) => {
@@ -488,9 +524,10 @@ impl VisitMut for ModuleAnalyzer {
 
             self.exports.push(ModuleExport::Name(ModuleExportName {
               exported_name: t.id.sym.clone(),
-              original_ident: ExportIdent::Name(t.id.sym.clone(), None),
+              original_ident: ExportOriginalIdent::Name(t.id.sym.clone(), None),
               mark: new_mark,
               src: None,
+              index: None,
             }))
           }
           Decl::TsModule(t) => {}
@@ -498,6 +535,11 @@ impl VisitMut for ModuleAnalyzer {
       }
       ModuleDecl::ExportNamed(named_export) => {
         use swc_ecma_ast::ExportSpecifier;
+
+        let ctxt = self.get_current_statement_mut().unwrap();
+        ctxt.is_export = true;
+
+        let mut is_export_decl = false;
 
         named_export.specifiers.iter_mut().for_each(|s| match s {
           ExportSpecifier::Named(named) => {
@@ -524,20 +566,33 @@ impl VisitMut for ModuleAnalyzer {
 
             self.exports.push(ModuleExport::Name(ModuleExportName {
               exported_name,
-              original_ident: ExportIdent::Name(get_module_export_name(&named.orig), src.clone()),
+              original_ident: ExportOriginalIdent::Name(
+                get_module_export_name(&named.orig),
+                src.clone(),
+              ),
               mark: new_mark,
               src: src.clone(),
-            }))
+              index: if src.is_some() {
+                Some(self.current_import_index)
+              } else {
+                None
+              },
+            }));
+
+            if src.is_some() {
+              self.advance_import_index();
+            }
           }
           ExportSpecifier::Namespace(namespace) => {
             let new_mark = symbol::new_mark();
             namespace.span.ctxt = new_mark.as_ctxt();
+            is_export_decl = true;
 
             self
               .exports
               .push(ModuleExport::Namespace(ModuleExportNamespace {
                 exported_name: get_module_export_name(&namespace.name),
-                original_ident: ExportIdent::Namespace,
+                original_ident: ExportOriginalIdent::Namespace,
                 mark: new_mark,
                 // source is always available in namespaces
                 src: named_export
@@ -545,16 +600,23 @@ impl VisitMut for ModuleAnalyzer {
                   .as_ref()
                   .map(|src| src.value.clone())
                   .unwrap(),
-              }))
+                index: self.current_import_index,
+              }));
+
+            self.advance_import_index();
           }
           ExportSpecifier::Default(default) => {}
         });
+
+        let ctxt = self.get_current_statement_mut().unwrap();
+        ctxt.is_export_decl = is_export_decl;
 
         n.visit_mut_children_with(self);
       }
       ModuleDecl::ExportDefaultDecl(export_default) => {
         let ctxt = self.get_current_statement_mut().unwrap();
         ctxt.is_export = true;
+        ctxt.is_export_decl = true;
 
         let name = js_word!("default");
         let new_mark = symbol::new_mark();
@@ -562,9 +624,10 @@ impl VisitMut for ModuleAnalyzer {
 
         self.exports.push(ModuleExport::Name(ModuleExportName {
           exported_name: name.clone(),
-          original_ident: ExportIdent::Name(name.clone(), None),
+          original_ident: ExportOriginalIdent::Name(name.clone(), None),
           mark: new_mark,
           src: None,
+          index: None,
         }));
 
         n.visit_mut_children_with(self);
@@ -578,7 +641,9 @@ impl VisitMut for ModuleAnalyzer {
 
         self.exports.push(ModuleExport::All(ModuleExportAll {
           src: export_all.src.value.clone(),
+          index: self.current_import_index,
         }));
+        self.advance_import_index();
 
         n.visit_mut_children_with(self);
       }

@@ -7,7 +7,9 @@ use swc_ecma_ast::{ImportSpecifier, ModuleDecl, ModuleItem, TsModuleRef};
 use swc_ecma_visit::VisitMutWith;
 
 use super::{
-  module_analyzer::{ModuleAnalyzer, StatementContext},
+  module_analyzer::{
+    ModuleAnalyzer, ModuleExport, ModuleExportName, ModuleExportNamespace, StatementContext,
+  },
   statement::Statement,
 };
 use crate::utils::resolve_id;
@@ -18,25 +20,15 @@ pub type LocalName = JsWord;
 pub type Source = JsWord;
 
 #[derive(Debug)]
-pub struct ExportDecl {
-  /// Mark of statement
-  mark: Mark,
-  /// statement_index in a module, if `ExportIdent` is `ExportIdent::Namespace`, then `statement_index` is `None`
-  statement_index: Option<usize>,
-}
-
-#[derive(Debug)]
-pub enum ExportIdent {
-  // source of export ident, only available when exporting with `export {} from ".."`
-  Name(LocalName, Option<Source>),
-  Namespace,
-  All,
-}
-
-#[derive(Debug)]
 pub enum ImportIdent {
   Name(JsWord),
   Namespace,
+}
+
+#[derive(Debug)]
+pub enum Exports {
+  Name(ModuleExportName),
+  Namespace(ModuleExportNamespace),
 }
 
 #[derive(Debug)]
@@ -49,9 +41,11 @@ pub struct Module {
   pub statements: Vec<Statement>,
   /// Local Exports, which does not include sub-modules' exports
   /// 'default', '*'(will only be generated when import namespace is declared from upper modules), and other exports...
-  pub local_exports: HashMap<ExportIdent, ExportDecl>,
-  /// In the linking exports process, sub-modules' exports will be synchronized to upper modules(nearer to the entry point)
-  pub exports: HashMap<ExportIdent, ExportDecl>,
+  pub local_exports: Vec<ModuleExport>,
+  /// In the linking exports process, sub-modules' exports will be synchronized to upper modules
+  /// i.e. `export all` in current module will represented as `named exports` here
+  ///      `export namespaced` will be kept as is.
+  pub exports: HashMap<LocalName, Exports>,
 
   /// sources(from import or export statement) to avoid resolving a module twice
   pub src_to_resolved_id: HashMap<JsWord, SmolStr>,
@@ -91,6 +85,7 @@ impl Module {
             }
           }
           ModuleDecl::ExportAll(export_all) => {
+            println!("export all {:#?}", export_all);
             discovered = Some(export_all.src.value.clone());
           }
           ModuleDecl::TsImportEquals(ts_import_decl) => {
@@ -128,7 +123,7 @@ impl Module {
     let mut module_analyzer = ModuleAnalyzer::new();
     swc_module.visit_mut_with(&mut module_analyzer);
 
-    println!("{:#?}", module_analyzer);
+    // println!("{:#?}", module_analyzer);
     module_analyzer
   }
 
@@ -137,7 +132,7 @@ impl Module {
     swc_module: swc_ecma_ast::Module,
     statement_context: Vec<StatementContext>,
   ) {
-    use super::statement::{DeclStatement, ExportStatement, ImportStatement};
+    use super::statement::{DeclStatement, ExportStatementNonDecl, ImportStatement};
     let statements = swc_module
       .body
       .into_iter()
@@ -145,14 +140,16 @@ impl Module {
       .map(|(swc_node, ctxt)| {
         if ctxt.is_import {
           Statement::ImportStatement(ImportStatement::new(swc_node))
-        } else if ctxt.is_export {
-          Statement::ExportStatement(ExportStatement::new(swc_node))
+        } else if ctxt.is_export && !ctxt.is_export_decl {
+          Statement::ExportStatementNonDecl(ExportStatementNonDecl::new(swc_node))
         } else {
           let mut statement = DeclStatement::new(swc_node);
           statement.reads = ctxt.reads;
+          statement.is_export_decl = ctxt.is_export_decl;
           statement.mark = ctxt.mark.expect(
             "[Module] `Mark` is supposed to be available in `StatementCtxt`, please file an issue",
           );
+          statement.validate_node_type();
 
           Statement::DeclStatement(statement)
         }

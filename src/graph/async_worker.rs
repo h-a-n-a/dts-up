@@ -13,7 +13,10 @@ use crate::ast::{
   self,
   module_analyzer::{ModuleExport, ModuleImport},
 };
-use crate::graph::{ModuleEdge, ModuleEdgeImport};
+use crate::graph::{
+  ModuleEdge, ModuleEdgeExportAll, ModuleEdgeExportNamed, ModuleEdgeExportNamespace,
+  ModuleEdgeImport,
+};
 use crate::result::Error;
 use crate::utils::resolve_id;
 
@@ -70,15 +73,14 @@ impl AsyncWorker {
   ) {
     let sub_modules = module.pre_analyze_sub_modules(swc_module);
 
+    log::debug!(
+      "[AsyncWorker] discovered submodules from {}: {:?}",
+      module.id,
+      sub_modules
+    );
+
     sub_modules.iter().for_each(|module_id| {
-      let module_id = resolve_id(
-        nodejs_path::resolve!(
-          nodejs_path::dirname(module.id.as_str()),
-          module_id.to_string()
-        )
-        .as_str(),
-      );
-      self.modules_to_work.lock().unwrap().push(module_id);
+      self.modules_to_work.lock().unwrap().push(module_id.clone());
     })
   }
 
@@ -102,7 +104,8 @@ impl AsyncWorker {
               index: module_import.index,
             }),
           ))
-          .await;
+          .await
+          .unwrap();
       }
     }
   }
@@ -114,26 +117,44 @@ impl AsyncWorker {
   ) {
     for module_export in exports {
       let mut src: Option<JsWord> = Default::default();
+      let mut module_export_index: Option<u32>;
 
       match module_export {
         ModuleExport::Name(e) => {
           src = e.src.clone();
+          module_export_index = e.index.clone();
         }
-        ModuleExport::All(e) => src = Some(e.src.clone()),
-        ModuleExport::Namespace(e) => src = Some(e.src.clone()),
+        ModuleExport::All(e) => {
+          src = Some(e.src.clone());
+          module_export_index = Some(e.index);
+        }
+        ModuleExport::Namespace(e) => {
+          src = Some(e.src.clone());
+          module_export_index = Some(e.index);
+        }
       };
 
       if let Some(src) = src.take() {
-        let resolved_id = module.src_to_resolved_id.get(&src).unwrap();
+        let resolved_id = module.src_to_resolved_id.get(&src).unwrap().clone();
+        let index = module_export_index.unwrap();
+
+        let module_edge = match module_export {
+          ModuleExport::Name(_) => ModuleEdge::ExportNamed(ModuleEdgeExportNamed { index }),
+          ModuleExport::All(_) => ModuleEdge::ExportAll(ModuleEdgeExportAll { index }),
+          ModuleExport::Namespace(_) => {
+            ModuleEdge::ExportNamespace(ModuleEdgeExportNamespace { index })
+          }
+        };
 
         self
           .resp_tx
           .send(WorkerMessage::NewDependency(
             module.id.clone(),
-            resolved_id.clone(),
-            ModuleEdge::Export,
+            resolved_id,
+            module_edge,
           ))
-          .await;
+          .await
+          .unwrap();
       }
     }
   }
@@ -163,7 +184,13 @@ impl AsyncWorker {
         .add_export_graph(&module, &module_analyzer.exports)
         .await;
 
-      self.resp_tx.send(WorkerMessage::NewModule(module)).await;
+      module.local_exports = module_analyzer.exports;
+
+      self
+        .resp_tx
+        .send(WorkerMessage::NewModule(module))
+        .await
+        .unwrap();
     }
   }
 }

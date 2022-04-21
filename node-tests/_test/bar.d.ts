@@ -1,1 +1,2 @@
-declare const bar: void;
+export { baz } from "./baz"
+export type bar = void;

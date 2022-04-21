@@ -1,15 +1,18 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::Ordering;
+use std::sync::atomic::Ordering::SeqCst;
 use std::sync::{atomic::AtomicUsize, Arc, Mutex};
 
 use dashmap::DashSet;
-use petgraph::visit::EdgeRef;
-use petgraph::Direction;
+use petgraph::{visit::EdgeRef, Direction};
 use smol_str::SmolStr;
-use tokio::sync::mpsc::{self, Sender};
+use tokio::sync::mpsc::{self, error::TryRecvError, Sender};
 
 use crate::{
-  ast::{self, module::ModuleId},
+  ast::{
+    self,
+    module::{self, ModuleId},
+  },
   graph::{
     async_worker::{AsyncWorker, WorkerMessage},
     ModuleEdge, ModuleGraph, ModuleIndex,
@@ -22,7 +25,6 @@ use crate::{
 pub struct Graph {
   resolved_entry: ModuleId,
   entry_module_index: ModuleIndex,
-  sorted_modules: Vec<ModuleIndex>,
   module_graph: ModuleGraph,
   id_to_module: HashMap<ModuleId, ast::module::Module>,
 }
@@ -41,7 +43,6 @@ impl Graph {
 
     Self {
       resolved_entry,
-      sorted_modules: Default::default(),
       entry_module_index: Default::default(),
       id_to_module: Default::default(),
       module_graph: ModuleGraph::new(),
@@ -51,6 +52,7 @@ impl Graph {
   pub async fn build(&mut self) -> Result<(), Error> {
     self.generate().await?;
     self.sort_modules();
+    self.link_exports();
 
     Ok(())
   }
@@ -95,76 +97,81 @@ impl Graph {
       });
     }
 
-    while !modules_to_work.lock().unwrap().is_empty()
-      || idle_thread_count.load(Ordering::SeqCst) != num_of_threads
-    {
-      if let Ok(worker_message) = rx.try_recv() {
-        use WorkerMessage::*;
-        log::debug!("[AsyncWorker] Received new message -> {}", worker_message);
-        match worker_message {
-          NewModule(module) => {
-            let id = module.id.clone();
-            self.id_to_module.insert(id.clone(), module);
-            let module_index = self.module_graph.get_or_add_module(id.clone());
+    drop(tx);
 
-            if id == self.resolved_entry {
-              self.entry_module_index = module_index;
-            }
+    while let Some(worker_message) = rx.recv().await {
+      use WorkerMessage::*;
+      log::debug!("[AsyncWorker] Received new message -> {}", worker_message);
+      match worker_message {
+        NewModule(module) => {
+          let id = module.id.clone();
+          self.id_to_module.insert(id.clone(), module);
+          let module_index = self.module_graph.get_or_add_module(id.clone());
+
+          if id == self.resolved_entry {
+            self.entry_module_index = module_index;
           }
-          NewDependency(from_id, to_id, edge) => {
-            let from_module_index = self.module_graph.get_or_add_module(from_id);
-            let to_module_index = self.module_graph.get_or_add_module(to_id);
-            self
-              .module_graph
-              .add_edge(from_module_index, to_module_index, edge);
-          }
+        }
+        NewDependency(from_id, to_id, edge) => {
+          let from_module_index = self.module_graph.get_or_add_module(from_id);
+          let to_module_index = self.module_graph.get_or_add_module(to_id);
+          self
+            .module_graph
+            .add_edge(from_module_index, to_module_index, edge);
         }
       }
     }
 
+    log::debug!("[Graph] generated module graph {:#?}", self.module_graph);
+
     Ok(())
   }
 
-  pub fn sort_modules(&mut self) {
-    let mut sorted: Vec<ModuleIndex> = Default::default();
-    let mut stack = vec![self.entry_module_index];
-    let mut visited: HashSet<ModuleIndex> = Default::default();
+  fn link_exports(&mut self) {
+    self
+      .get_sorted_modules()
+      .clone()
+      .into_iter()
+      .for_each(|module_index| {
+        let module = self.get_module_by_module_index_mut(&module_index);
+        println!("module id {}", module.id);
+        let source_module_ids = self
+          .module_graph
+          .get_edges_directed(module_index, Direction::Incoming)
+          .map(|edge| {
+            (
+              self.module_graph.get_module_id_by_index(&edge.source()),
+              edge.weight().clone(),
+            )
+          })
+          .collect::<Vec<_>>();
 
-    while let Some(node_index) = stack.pop() {
-      if visited.contains(&node_index) {
-        sorted.push(node_index);
-        continue;
-      }
+        let source_modules = source_module_ids
+          .into_iter()
+          .map(|(module_id, edge)| (self.id_to_module.get_mut(&module_id).unwrap(), edge))
+          .collect::<Vec<_>>();
+        println!("{:#?}", source_modules);
+      })
+  }
 
-      stack.push(node_index);
-      visited.insert(node_index);
+  fn sort_modules(&mut self) {
+    self.module_graph.sort_modules(self.entry_module_index);
+    log::debug!("[Graph] sorted modules {:#?}", self.get_sorted_modules());
+  }
 
-      let mut level_edges = self
-        .module_graph
-        .get_edges_directed(node_index, Direction::Outgoing)
-        .filter_map(|edge| {
-          let target_module_index = edge.target();
-          let weight = edge.weight();
+  fn get_module_by_module_index(&self, module_index: &ModuleIndex) -> &module::Module {
+    let module_id = self.module_graph.get_module_id_by_index(module_index);
+    self.id_to_module.get(&module_id).unwrap()
+  }
 
-          if visited.contains(&target_module_index) {
-            return None;
-          }
+  fn get_module_by_module_index_mut(&mut self, module_index: &ModuleIndex) -> &mut module::Module {
+    let module_id = self.module_graph.get_module_id_by_index(module_index);
+    // println!("id to module {:#?}", self.id_to_module);
+    self.id_to_module.get_mut(&module_id).unwrap()
+  }
 
-          if let ModuleEdge::Import(module_import) = weight {
-            return Some((target_module_index, module_import.index));
-          }
-
-          None
-        })
-        .collect::<Vec<_>>();
-
-      level_edges.sort_by_key(|e| e.1);
-
-      level_edges
-        .iter()
-        .for_each(|(module_index, _)| stack.push(module_index.clone()))
-    }
-
-    self.sorted_modules = sorted;
+  #[inline]
+  fn get_sorted_modules(&self) -> Vec<ModuleIndex> {
+    self.module_graph.get_sorted_modules().clone()
   }
 }
