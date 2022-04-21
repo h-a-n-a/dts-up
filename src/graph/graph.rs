@@ -194,7 +194,6 @@ impl Graph {
 
   fn get_module_by_module_index_mut(&mut self, module_index: &ModuleIndex) -> &mut module::Module {
     let module_id = self.module_graph.get_module_id_by_index(module_index);
-    // println!("id to module {:#?}", self.id_to_module);
     self.id_to_module.get_mut(&module_id).unwrap()
   }
 

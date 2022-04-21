@@ -82,10 +82,11 @@ impl Scope {
         vacant.insert(Definition::new(mark.clone(), definition_type));
         self.mark_to_name.insert(mark, name);
       }
-      Entry::Occupied(_) => {
+      Entry::Occupied(o) => {
         // Interfaces may be defined multiple times in the same scope
-        if !matches!(definition_type, VariableDeclaration::TsInterfaceDeclaration) {
-          println!("oops {}", name.clone());
+        if !matches!(definition_type, VariableDeclaration::TsInterfaceDeclaration)
+          || !matches!(o.get().kind, VariableDeclaration::TsInterfaceDeclaration)
+        {
           panic!(
             "[Scope] unable to declare {:?} multiple times",
             definition_type
