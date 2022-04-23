@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
+use rayon::prelude::*;
 use smol_str::SmolStr;
 use swc_atoms::JsWord;
 use swc_common::Mark;
@@ -136,7 +137,7 @@ impl Module {
     let statements = swc_module
       .body
       .into_iter()
-      .zip(statement_context.into_iter())
+      .zip(statement_context)
       .map(|(swc_node, ctxt)| {
         if ctxt.is_import {
           Statement::ImportStatement(ImportStatement::new(swc_node))
@@ -160,15 +161,15 @@ impl Module {
   }
 
   pub fn include_statement_with_mark_set(&mut self, mark_set: &HashSet<Mark>) {
-    self.statements.iter_mut().for_each(|s| match s {
+    self.statements.par_iter_mut().for_each(|s| match s {
       Statement::DeclStatement(s) => {
         let repr_mark = symbol::SYMBOL_BOX.lock().unwrap().find_root(s.mark);
         if mark_set.contains(&repr_mark) {
           log::debug!(
-            "[Module] statement {:?} is included with mark {:?}(repr mark: {:?})",
-            s,
+            "[Module] including statement with mark {:?}(repr mark: {:?}) \nstatement: {:?}",
             s.mark,
-            repr_mark
+            repr_mark,
+            s,
           );
           s.include();
         }

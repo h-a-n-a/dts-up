@@ -310,13 +310,21 @@ impl Graph {
     let entry_module = self.get_module_by_module_index(&self.entry_module_index);
 
     // convert mark to representative mark in disjoint set
-    let marks_to_include = HashSet::from_iter(entry_module.exports.values().map(|export| {
-      let mark = match export {
-        Exports::Name(e) => e.mark,
-        Exports::Namespace(e) => e.mark,
-      };
-      symbol::SYMBOL_BOX.lock().unwrap().find_root(mark)
-    }));
+    let marks_to_include = HashSet::from_iter(
+      entry_module
+        .exports
+        .values()
+        .collect::<Vec<_>>()
+        .into_par_iter()
+        .map(|export| {
+          let mark = match export {
+            Exports::Name(e) => e.mark,
+            Exports::Namespace(e) => e.mark,
+          };
+          symbol::SYMBOL_BOX.lock().unwrap().find_root(mark)
+        })
+        .collect::<Vec<_>>(),
+    );
 
     self
       .module_graph

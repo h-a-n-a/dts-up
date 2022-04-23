@@ -57,6 +57,7 @@ impl DeclStatement {
     }
   }
 
+  #[inline]
   pub fn validate_node_type(&self) {
     log::debug!(
       "[DeclStatement] validating node {:?} with is_export_decl set to {}...",
