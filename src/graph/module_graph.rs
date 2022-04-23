@@ -40,7 +40,7 @@ pub enum ModuleEdge {
 pub type ModuleIndex = NodeIndex;
 
 pub struct ModuleGraph {
-  inner: Graph<ModuleId, ModuleEdge, Directed, DefaultIx>,
+  pub(crate) inner: Graph<ModuleId, ModuleEdge, Directed, DefaultIx>,
   sorted_modules: Vec<ModuleIndex>,
   module_id_to_index: HashMap<ModuleId, ModuleIndex>,
 }

@@ -89,4 +89,8 @@ impl DeclStatement {
       )
     }
   }
+
+  pub fn include(&mut self) {
+    self.included = true
+  }
 }

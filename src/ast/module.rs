@@ -12,6 +12,7 @@ use super::{
     StatementContext,
   },
   statement::Statement,
+  symbol,
 };
 use crate::utils::resolve_id;
 
@@ -156,5 +157,24 @@ impl Module {
       .collect::<Vec<_>>();
 
     self.statements = statements;
+  }
+
+  pub fn include_statement_with_mark_set(&mut self, mark_set: &HashSet<Mark>) {
+    self.statements.iter_mut().for_each(|s| match s {
+      Statement::DeclStatement(s) => {
+        let repr_mark = symbol::SYMBOL_BOX.lock().unwrap().find_root(s.mark);
+        if mark_set.contains(&repr_mark) {
+          log::debug!(
+            "[Module] statement {:?} is included with mark {:?}(repr mark: {:?})",
+            s,
+            s.mark,
+            repr_mark
+          );
+          s.include();
+        }
+      }
+      // import statement or non-declarative export statement are omitted
+      _ => (),
+    })
   }
 }

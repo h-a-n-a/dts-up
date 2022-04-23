@@ -57,6 +57,7 @@ impl Graph {
     self.sort_modules();
     self.link_export_all();
     self.link_modules();
+    self.include_with_tree_shaking();
 
     Ok(())
   }
@@ -303,6 +304,28 @@ impl Graph {
             }
           })
       });
+  }
+
+  fn include_with_tree_shaking(&mut self) {
+    let entry_module = self.get_module_by_module_index(&self.entry_module_index);
+
+    // convert mark to representative mark in disjoint set
+    let marks_to_include = HashSet::from_iter(entry_module.exports.values().map(|export| {
+      let mark = match export {
+        Exports::Name(e) => e.mark,
+        Exports::Namespace(e) => e.mark,
+      };
+      symbol::SYMBOL_BOX.lock().unwrap().find_root(mark)
+    }));
+
+    self
+      .module_graph
+      .inner
+      .node_indices()
+      .for_each(|module_index| {
+        let module = self.get_module_by_module_index_mut(&module_index);
+        module.include_statement_with_mark_set(&marks_to_include);
+      })
   }
 
   #[inline]
