@@ -9,7 +9,7 @@ use swc_atoms::JsWord;
 use tokio::sync::mpsc::Sender;
 
 use crate::ast::module::{Exports, LocalName, ModuleId};
-use crate::ast::module_analyzer::{ExportOriginalIdent, ModuleExportName};
+use crate::ast::module_analyzer::ModuleExportName;
 use crate::ast::{
   self,
   module_analyzer::{ModuleExport, ModuleImport},
@@ -204,6 +204,7 @@ impl AsyncWorker {
           }
         });
       module.local_exports = module_analyzer.exports;
+      module.imports = module_analyzer.imports;
 
       self
         .resp_tx

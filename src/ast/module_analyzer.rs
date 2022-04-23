@@ -14,14 +14,6 @@ use super::{
 
 type LocalName = JsWord;
 
-#[derive(Debug, Clone)]
-pub enum ExportOriginalIdent {
-  // source of export ident, only available when exporting with `export {} from ".."`
-  Name(LocalName, Option<Source>),
-  Namespace,
-  All,
-}
-
 #[derive(Debug)]
 pub struct ModuleImport {
   /// Index of the same `src` shares the same index
@@ -39,7 +31,7 @@ pub struct ModuleImport {
 #[derive(Debug, Clone)]
 pub struct ModuleExportName {
   pub exported_name: LocalName,
-  pub original_ident: ExportOriginalIdent,
+  pub original_ident: LocalName,
   pub mark: Mark,
   // without src: `export { name }`, with src: `export { name } from "./foo"`
   pub src: Option<Source>,
@@ -51,7 +43,6 @@ pub struct ModuleExportName {
 pub struct ModuleExportNamespace {
   pub index: u32,
   pub exported_name: LocalName,
-  pub original_ident: ExportOriginalIdent,
   pub mark: Mark,
   pub src: Source,
 }
@@ -281,6 +272,13 @@ impl ModuleAnalyzer {
       .zip(original_idents)
       .zip(marks)
       .for_each(|((local_name, original_ident), mark)| {
+        if self.get_top_level_names().contains(&local_name) {
+          panic!(
+            "[ModuleAnalyzer] duplicated variable detected {}",
+            local_name
+          );
+        }
+
         if let hash_map::Entry::Vacant(entry) = self.imports.entry(local_name.clone()) {
           let module_import = ModuleImport {
             index,
@@ -456,7 +454,7 @@ impl VisitMut for ModuleAnalyzer {
 
                 self.exports.push(ModuleExport::Name(ModuleExportName {
                   exported_name: ident.id.sym.clone(),
-                  original_ident: ExportOriginalIdent::Name(ident.id.sym.clone(), None),
+                  original_ident: ident.id.sym.clone(),
                   mark: new_mark,
                   src: None,
                   index: None,
@@ -476,7 +474,7 @@ impl VisitMut for ModuleAnalyzer {
 
             self.exports.push(ModuleExport::Name(ModuleExportName {
               exported_name: c.ident.sym.clone(),
-              original_ident: ExportOriginalIdent::Name(c.ident.sym.clone(), None),
+              original_ident: c.ident.sym.clone(),
               mark: new_mark,
               src: None,
               index: None,
@@ -488,7 +486,7 @@ impl VisitMut for ModuleAnalyzer {
 
             self.exports.push(ModuleExport::Name(ModuleExportName {
               exported_name: f.ident.sym.clone(),
-              original_ident: ExportOriginalIdent::Name(f.ident.sym.clone(), None),
+              original_ident: f.ident.sym.clone(),
               mark: new_mark,
               src: None,
               index: None,
@@ -500,7 +498,7 @@ impl VisitMut for ModuleAnalyzer {
 
             self.exports.push(ModuleExport::Name(ModuleExportName {
               exported_name: t.id.sym.clone(),
-              original_ident: ExportOriginalIdent::Name(t.id.sym.clone(), None),
+              original_ident: t.id.sym.clone(),
               mark: new_mark,
               src: None,
               index: None,
@@ -512,7 +510,7 @@ impl VisitMut for ModuleAnalyzer {
 
             self.exports.push(ModuleExport::Name(ModuleExportName {
               exported_name: t.id.sym.clone(),
-              original_ident: ExportOriginalIdent::Name(t.id.sym.clone(), None),
+              original_ident: t.id.sym.clone(),
               mark: new_mark,
               src: None,
               index: None,
@@ -524,7 +522,7 @@ impl VisitMut for ModuleAnalyzer {
 
             self.exports.push(ModuleExport::Name(ModuleExportName {
               exported_name: t.id.sym.clone(),
-              original_ident: ExportOriginalIdent::Name(t.id.sym.clone(), None),
+              original_ident: t.id.sym.clone(),
               mark: new_mark,
               src: None,
               index: None,
@@ -545,6 +543,7 @@ impl VisitMut for ModuleAnalyzer {
           ExportSpecifier::Named(named) => {
             let new_mark = self
               .get_mark_by_name(&get_module_export_name(&named.orig))
+              // or maybe its a global variable, should we assign a new mark(only used as a placeholder) here?
               .unwrap_or_else(|| symbol::new_mark());
 
             let exported_name: JsWord = {
@@ -566,10 +565,7 @@ impl VisitMut for ModuleAnalyzer {
 
             self.exports.push(ModuleExport::Name(ModuleExportName {
               exported_name,
-              original_ident: ExportOriginalIdent::Name(
-                get_module_export_name(&named.orig),
-                src.clone(),
-              ),
+              original_ident: get_module_export_name(&named.orig),
               mark: new_mark,
               src: src.clone(),
               index: if src.is_some() {
@@ -592,7 +588,6 @@ impl VisitMut for ModuleAnalyzer {
               .exports
               .push(ModuleExport::Namespace(ModuleExportNamespace {
                 exported_name: get_module_export_name(&namespace.name),
-                original_ident: ExportOriginalIdent::Namespace,
                 mark: new_mark,
                 // source is always available in namespaces
                 src: named_export
@@ -624,7 +619,7 @@ impl VisitMut for ModuleAnalyzer {
 
         self.exports.push(ModuleExport::Name(ModuleExportName {
           exported_name: name.clone(),
-          original_ident: ExportOriginalIdent::Name(name.clone(), None),
+          original_ident: name.clone(),
           mark: new_mark,
           src: None,
           index: None,

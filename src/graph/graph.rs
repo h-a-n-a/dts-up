@@ -6,13 +6,15 @@ use std::sync::{
 
 use dashmap::DashSet;
 use petgraph::{visit::EdgeRef, Direction};
+use rayon::prelude::*;
 use smol_str::SmolStr;
 use tokio::sync::mpsc::{self, error::TryRecvError, Sender};
 
 use crate::{
   ast::{
     self,
-    module::{self, ModuleId},
+    module::{self, Exports, ImportIdent, ModuleId},
+    symbol,
   },
   graph::{
     async_worker::{AsyncWorker, WorkerMessage},
@@ -54,6 +56,7 @@ impl Graph {
     self.generate().await?;
     self.sort_modules();
     self.link_export_all();
+    self.link_modules();
 
     Ok(())
   }
@@ -187,11 +190,128 @@ impl Graph {
     log::debug!("[Graph] sorted modules {:#?}", self.get_sorted_modules());
   }
 
+  fn link_modules(&self) {
+    self
+      .module_graph
+      .get_sorted_modules()
+      .clone()
+      .into_iter()
+      .rev()
+      .for_each(|source_module_index| {
+        let source_module = self.get_module_by_module_index(&source_module_index);
+
+        source_module.imports.values().for_each(|module_import| {
+          let target_module = self
+            .id_to_module
+            .get(
+              source_module
+                .src_to_resolved_id
+                .get(&module_import.src)
+                .unwrap(),
+            )
+            .unwrap();
+
+          match &module_import.original_ident {
+            ImportIdent::Name(original_name) => {
+              if let Some(export) = target_module.exports.get(original_name) {
+                log::debug!(
+                  "[Graph] linking symbol `{}`(imported as `{}`) from {} to {}",
+                  original_name,
+                  module_import.local_name,
+                  target_module.id,
+                  source_module.id
+                );
+
+                match export {
+                  Exports::Name(e) => {
+                    symbol::SYMBOL_BOX
+                      .lock()
+                      .unwrap()
+                      .union(module_import.mark, e.mark);
+                  }
+                  Exports::Namespace(e) => {
+                    symbol::SYMBOL_BOX
+                      .lock()
+                      .unwrap()
+                      .union(module_import.mark, e.mark);
+                  }
+                }
+              } else {
+                panic!(
+                  "[Graph] linking failed, as symbol `{}` imported from {} is not exist",
+                  original_name, target_module.id
+                );
+              }
+            }
+            ImportIdent::Namespace => {
+              // TODO: link namespace, we should figure out how we handle newly added helpers in the first place.
+            }
+          }
+        });
+
+        source_module
+          .exports
+          .values()
+          .for_each(|dep_export| match dep_export {
+            Exports::Name(dep_export_name) => {
+              // only directly(sources are existed in `src_to_resolved_id` map in current module) exported names with src should be linked
+              if dep_export_name.src.is_some()
+                && source_module
+                  .src_to_resolved_id
+                  .get(dep_export_name.src.as_ref().unwrap())
+                  .is_some()
+              {
+                let target_module = self
+                  .id_to_module
+                  .get(
+                    source_module
+                      .src_to_resolved_id
+                      .get(dep_export_name.src.as_ref().unwrap())
+                      .unwrap(),
+                  )
+                  .unwrap();
+
+                if let Some(e) = target_module.exports.get(&dep_export_name.original_ident) {
+                  log::debug!(
+                    "[Graph] linking symbol `{}`(exported as `{}`) from {} to {}",
+                    dep_export_name.original_ident,
+                    dep_export_name.exported_name,
+                    target_module.id,
+                    source_module.id
+                  );
+
+                  match e {
+                    Exports::Name(e) => {
+                      symbol::SYMBOL_BOX
+                        .lock()
+                        .unwrap()
+                        .union(dep_export_name.mark, e.mark);
+                    }
+                    Exports::Namespace(n) => {
+                      symbol::SYMBOL_BOX
+                        .lock()
+                        .unwrap()
+                        .union(dep_export_name.mark, n.mark);
+                    }
+                  }
+                }
+              }
+            }
+            Exports::Namespace(e) => {
+              // `export * as xxx from "xxx"` in current module
+              // TODO: we have to link the identifier to target export namespace. But we should figure out how we handle newly added helpers in the first place.
+            }
+          })
+      });
+  }
+
+  #[inline]
   fn get_module_by_module_index(&self, module_index: &ModuleIndex) -> &module::Module {
     let module_id = self.module_graph.get_module_id_by_index(module_index);
     self.id_to_module.get(&module_id).unwrap()
   }
 
+  #[inline]
   fn get_module_by_module_index_mut(&mut self, module_index: &ModuleIndex) -> &mut module::Module {
     let module_id = self.module_graph.get_module_id_by_index(module_index);
     self.id_to_module.get_mut(&module_id).unwrap()

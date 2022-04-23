@@ -8,7 +8,8 @@ use swc_ecma_visit::VisitMutWith;
 
 use super::{
   module_analyzer::{
-    ModuleAnalyzer, ModuleExport, ModuleExportName, ModuleExportNamespace, StatementContext,
+    ModuleAnalyzer, ModuleExport, ModuleExportName, ModuleExportNamespace, ModuleImport,
+    StatementContext,
   },
   statement::Statement,
 };
@@ -39,6 +40,7 @@ pub struct Module {
   pub is_entry: bool,
   /// Raw Statements mapped from
   pub statements: Vec<Statement>,
+  pub imports: HashMap<LocalName, ModuleImport>,
   /// Local Exports, which does not include sub-modules' exports
   /// 'default', '*'(will only be generated when import namespace is declared from upper modules), and other exports...
   pub local_exports: Vec<ModuleExport>,
@@ -62,6 +64,7 @@ impl Module {
       id: options.id,
       is_entry: options.is_entry,
       statements: Default::default(),
+      imports: Default::default(),
       local_exports: Default::default(),
       src_to_resolved_id: Default::default(),
       exports: Default::default(),
@@ -120,8 +123,6 @@ impl Module {
   pub fn analyze(&mut self, swc_module: &mut swc_ecma_ast::Module) -> ModuleAnalyzer {
     let mut module_analyzer = ModuleAnalyzer::new();
     swc_module.visit_mut_with(&mut module_analyzer);
-
-    // println!("{:#?}", module_analyzer);
     module_analyzer
   }
 
