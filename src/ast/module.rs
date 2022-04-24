@@ -76,47 +76,56 @@ impl Module {
   pub fn pre_analyze_sub_modules(&mut self, swc_module: &swc_ecma_ast::Module) -> HashSet<SmolStr> {
     let mut discovered_import: HashSet<SmolStr> = Default::default();
 
-    swc_module.body.iter().for_each(|module_item| {
-      let mut discovered: Option<_> = None;
-      match module_item {
-        ModuleItem::ModuleDecl(module_decl) => match module_decl {
-          ModuleDecl::Import(import_decl) => {
-            discovered = Some(import_decl.src.value.clone());
-          }
-          ModuleDecl::ExportNamed(export_named) => {
-            if let Some(src) = &export_named.src {
-              discovered = Some(src.value.clone());
+    let sub_modules = swc_module
+      .body
+      .iter()
+      .filter_map(|module_item| {
+        let mut discovered: Option<_> = None;
+        match module_item {
+          ModuleItem::ModuleDecl(module_decl) => match module_decl {
+            ModuleDecl::Import(import_decl) => {
+              discovered = Some(import_decl.src.value.clone());
             }
-          }
-          ModuleDecl::ExportAll(export_all) => {
-            discovered = Some(export_all.src.value.clone());
-          }
-          ModuleDecl::TsImportEquals(ts_import_decl) => {
-            if let TsModuleRef::TsExternalModuleRef(ts_module_ref) = &ts_import_decl.module_ref {
-              discovered = Some(ts_module_ref.expr.value.clone());
+            ModuleDecl::ExportNamed(export_named) => {
+              if let Some(src) = &export_named.src {
+                discovered = Some(src.value.clone());
+              }
             }
-          }
-          _ => (),
-        },
-        _ => {}
-      }
+            ModuleDecl::ExportAll(export_all) => {
+              discovered = Some(export_all.src.value.clone());
+            }
+            ModuleDecl::TsImportEquals(ts_import_decl) => {
+              if let TsModuleRef::TsExternalModuleRef(ts_module_ref) = &ts_import_decl.module_ref {
+                discovered = Some(ts_module_ref.expr.value.clone());
+              }
+            }
+            _ => (),
+          },
+          _ => {}
+        }
 
-      if let Some(source) = discovered {
-        let resolved_id = resolve_id(
-          nodejs_path::resolve!(
-            nodejs_path::dirname(self.id.as_str()),
-            source.as_ref().to_string()
-          )
-          .as_str(),
-        );
+        if let Some(source) = discovered {
+          let resolved_id = resolve_id(
+            nodejs_path::resolve!(
+              nodejs_path::dirname(self.id.as_str()),
+              source.as_ref().to_string()
+            )
+            .as_str(),
+          );
 
-        self
-          .src_to_resolved_id
-          .entry(source)
-          .or_insert_with(|| resolved_id.clone());
+          return Some((source, resolved_id));
+        }
 
-        discovered_import.insert(resolved_id);
-      }
+        None
+      })
+      .collect::<Vec<_>>();
+
+    sub_modules.iter().for_each(|(source, resolved_id)| {
+      self
+        .src_to_resolved_id
+        .entry(source.clone())
+        .or_insert_with(|| resolved_id.clone());
+      discovered_import.insert(resolved_id.clone());
     });
 
     discovered_import
@@ -161,9 +170,9 @@ impl Module {
   }
 
   pub fn include_statement_with_mark_set(&mut self, mark_set: &HashSet<Mark>) {
-    self.statements.par_iter_mut().for_each(|s| match s {
+    self.statements.iter_mut().for_each(|s| match s {
       Statement::DeclStatement(s) => {
-        let repr_mark = symbol::SYMBOL_BOX.lock().unwrap().find_root(s.mark);
+        let repr_mark = symbol::SYMBOL_BOX.lock().find_root(s.mark);
         if mark_set.contains(&repr_mark) {
           log::debug!(
             "[Module] including statement with mark {:?}(repr mark: {:?}) \nstatement: {:?}",

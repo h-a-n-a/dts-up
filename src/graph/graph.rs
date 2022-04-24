@@ -1,10 +1,11 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{
   atomic::{AtomicUsize, Ordering},
-  Arc, Mutex,
+  Arc,
 };
 
 use dashmap::DashSet;
+use parking_lot::RwLock;
 use petgraph::{visit::EdgeRef, Direction};
 use rayon::prelude::*;
 use smol_str::SmolStr;
@@ -68,9 +69,8 @@ impl Graph {
 
     let (tx, mut rx) = mpsc::channel::<WorkerMessage>(32);
 
-    // TODO: replace with RwLock
-    let modules_to_work: Arc<Mutex<Vec<ModuleId>>> =
-      Arc::new(Mutex::new(vec![self.resolved_entry.clone()]));
+    let modules_to_work: Arc<RwLock<Vec<ModuleId>>> =
+      Arc::new(RwLock::new(vec![self.resolved_entry.clone()]));
 
     self.module_graph.add_module(self.resolved_entry.clone());
 
@@ -92,7 +92,7 @@ impl Graph {
           idle_thread_count.fetch_add(1, Ordering::SeqCst);
 
           loop {
-            if !async_worker.modules_to_work.lock().unwrap().is_empty() {
+            if !async_worker.modules_to_work.read().is_empty() {
               break;
             } else if idle_thread_count.load(Ordering::SeqCst) == num_of_threads {
               return;
@@ -225,16 +225,10 @@ impl Graph {
 
                 match export {
                   Exports::Name(e) => {
-                    symbol::SYMBOL_BOX
-                      .lock()
-                      .unwrap()
-                      .union(module_import.mark, e.mark);
+                    symbol::SYMBOL_BOX.lock().union(module_import.mark, e.mark);
                   }
                   Exports::Namespace(e) => {
-                    symbol::SYMBOL_BOX
-                      .lock()
-                      .unwrap()
-                      .union(module_import.mark, e.mark);
+                    symbol::SYMBOL_BOX.lock().union(module_import.mark, e.mark);
                   }
                 }
               } else {
@@ -285,13 +279,11 @@ impl Graph {
                     Exports::Name(e) => {
                       symbol::SYMBOL_BOX
                         .lock()
-                        .unwrap()
                         .union(dep_export_name.mark, e.mark);
                     }
                     Exports::Namespace(n) => {
                       symbol::SYMBOL_BOX
                         .lock()
-                        .unwrap()
                         .union(dep_export_name.mark, n.mark);
                     }
                   }
@@ -321,7 +313,7 @@ impl Graph {
             Exports::Name(e) => e.mark,
             Exports::Namespace(e) => e.mark,
           };
-          symbol::SYMBOL_BOX.lock().unwrap().find_root(mark)
+          symbol::SYMBOL_BOX.lock().find_root(mark)
         })
         .collect::<Vec<_>>(),
     );

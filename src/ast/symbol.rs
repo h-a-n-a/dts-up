@@ -1,6 +1,6 @@
 use ena::unify::{InPlaceUnificationTable, UnifyKey};
 use once_cell::sync::Lazy;
-use std::sync::Mutex;
+use parking_lot::Mutex;
 
 use swc_common::{Globals, Mark, SyntaxContext, GLOBALS};
 
@@ -19,7 +19,7 @@ pub struct SymbolBox {
 
 #[inline]
 pub fn new_mark() -> Mark {
-  SYMBOL_BOX.lock().unwrap().new_mark()
+  SYMBOL_BOX.lock().new_mark()
 }
 
 impl Default for SymbolBox {

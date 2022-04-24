@@ -1,9 +1,10 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt::{Display, Formatter};
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use dashmap::DashSet;
+use parking_lot::RwLock;
 use smol_str::SmolStr;
 use swc_atoms::JsWord;
 use tokio::sync::mpsc::Sender;
@@ -50,14 +51,14 @@ impl Display for WorkerMessage {
 #[derive(Debug)]
 pub struct AsyncWorker {
   pub resp_tx: Sender<WorkerMessage>,
-  pub modules_to_work: Arc<Mutex<Vec<SmolStr>>>,
+  pub modules_to_work: Arc<RwLock<Vec<SmolStr>>>,
   pub worked_modules: Arc<DashSet<SmolStr>>,
   pub resolved_entries: Arc<DashSet<SmolStr>>,
 }
 
 impl AsyncWorker {
   fn fetch_job(&mut self) -> Option<SmolStr> {
-    while let Some(resolved_id) = self.modules_to_work.lock().unwrap().pop() {
+    while let Some(resolved_id) = self.modules_to_work.write().pop() {
       if !self.worked_modules.contains(&resolved_id) {
         self.worked_modules.insert(resolved_id.clone());
         return Some(resolved_id.clone());
@@ -81,7 +82,7 @@ impl AsyncWorker {
     );
 
     sub_modules.iter().for_each(|module_id| {
-      self.modules_to_work.lock().unwrap().push(module_id.clone());
+      self.modules_to_work.write().push(module_id.clone());
     })
   }
 
