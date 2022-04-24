@@ -1,5 +1,6 @@
 // export type { baz } from "./baz"
 // export * from "./bar"
 import { bar } from "./bar"
-type fooo = string
+type foooo = number
+type fooo = foooo
 export type foo = fooo

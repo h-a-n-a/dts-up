@@ -1,8 +1,11 @@
+use std::string::FromUtf8Error;
 use tokio::task::JoinError;
 
 #[derive(Debug)]
 pub enum DtsupErrorType {
+  GraphMissingError,
   ParseFileError,
+  UTF8Error,
 
   JoinError,
   IOError,
@@ -39,6 +42,12 @@ impl From<JoinError> for Error {
 impl From<std::io::Error> for Error {
   fn from(err: std::io::Error) -> Self {
     Error::new_with_reason(DtsupErrorType::IOError, &err.to_string())
+  }
+}
+
+impl From<FromUtf8Error> for Error {
+  fn from(err: FromUtf8Error) -> Self {
+    Error::new_with_reason(DtsupErrorType::UTF8Error, &err.to_string())
   }
 }
 

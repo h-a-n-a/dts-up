@@ -14,7 +14,7 @@ use tokio::sync::mpsc::{self, error::TryRecvError, Sender};
 use crate::{
   ast::{
     self,
-    module::{self, Exports, ImportIdent, ModuleId},
+    module::{self, Exports, ImportIdent, LocalName, ModuleId},
     symbol,
   },
   graph::{
@@ -34,16 +34,13 @@ pub struct Graph {
 }
 
 #[derive(Debug)]
-pub struct GraphOptions<T: AsRef<str>> {
-  pub entry: T,
+pub struct GraphOptions {
+  pub entry: SmolStr,
 }
 
 impl Graph {
-  pub fn new<T>(options: GraphOptions<T>) -> Self
-  where
-    T: AsRef<str>,
-  {
-    let resolved_entry = resolve_id(&nodejs_path::resolve!(options.entry.as_ref()));
+  pub fn new(options: GraphOptions) -> Self {
+    let resolved_entry = resolve_id(&nodejs_path::resolve!(options.entry.as_str()));
 
     Self {
       resolved_entry,
@@ -328,20 +325,30 @@ impl Graph {
       })
   }
 
+  pub(crate) fn get_top_level_exports(&self) -> HashMap<LocalName, Exports> {
+    self
+      .get_module_by_module_index(&self.entry_module_index)
+      .exports
+      .clone()
+  }
+
   #[inline]
-  fn get_module_by_module_index(&self, module_index: &ModuleIndex) -> &module::Module {
+  pub(crate) fn get_module_by_module_index(&self, module_index: &ModuleIndex) -> &module::Module {
     let module_id = self.module_graph.get_module_id_by_index(module_index);
     self.id_to_module.get(&module_id).unwrap()
   }
 
   #[inline]
-  fn get_module_by_module_index_mut(&mut self, module_index: &ModuleIndex) -> &mut module::Module {
+  pub(crate) fn get_module_by_module_index_mut(
+    &mut self,
+    module_index: &ModuleIndex,
+  ) -> &mut module::Module {
     let module_id = self.module_graph.get_module_id_by_index(module_index);
     self.id_to_module.get_mut(&module_id).unwrap()
   }
 
   #[inline]
-  fn get_sorted_modules(&self) -> Vec<ModuleIndex> {
+  pub(crate) fn get_sorted_modules(&self) -> Vec<ModuleIndex> {
     self.module_graph.get_sorted_modules().clone()
   }
 }

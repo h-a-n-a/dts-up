@@ -32,7 +32,7 @@ impl ExportStatementNonDecl {
   }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DeclStatement {
   pub node: ModuleItem,
   pub included: bool,

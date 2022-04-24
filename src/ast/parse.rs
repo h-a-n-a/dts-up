@@ -13,8 +13,11 @@ use tokio::io::AsyncReadExt;
 
 use crate::result::{DtsupErrorType, Error};
 
+pub(crate) static SOURCE_MAP: Lazy<Arc<SourceMap>> =
+  Lazy::new(|| Arc::new(SourceMap::new(FilePathMapping::empty())));
+
 pub(crate) static COMPILER: Lazy<Arc<Compiler>> = Lazy::new(|| {
-  let source_map = Arc::new(SourceMap::new(FilePathMapping::empty()));
+  let source_map = SOURCE_MAP.clone();
   Arc::new(Compiler::new(source_map))
 });
 

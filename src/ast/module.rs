@@ -192,10 +192,8 @@ impl Module {
         let repr_mark = symbol::SYMBOL_BOX.lock().find_root(s.mark);
         if mark_set.contains(&repr_mark) {
           maybe_local_reads.push(s.mark);
-          maybe_local_reads.extend(&s.reads);
         }
       }
-      // import statement or non-declarative export statement are omitted
       _ => (),
     });
 
@@ -215,8 +213,8 @@ impl Module {
               s,
             );
             s.include();
+            maybe_local_reads.extend(&s.reads);
           }
-          // import statement or non-declarative export statement are omitted
           _ => (),
         }
       } else {

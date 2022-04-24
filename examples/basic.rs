@@ -1,13 +1,15 @@
 #[tokio::main]
 async fn main() {
   env_logger::init();
-  use dts_up::graph::{Graph, GraphOptions};
+  // use dts_up::graph::{Graph, GraphOptions};
+  use dts_up::{Dtsup, DtsupGenerateOptions, DtsupOptions};
 
-  let mut graph = Graph::new(GraphOptions {
+  let mut bundler = Dtsup::new(DtsupOptions {
     entry: "node-tests/_test/index.d.ts",
   });
 
-  graph.build().await.unwrap();
+  bundler.build().await.unwrap();
+  bundler.generate(DtsupGenerateOptions { outdir: "abc" });
 
   // println!("\n\n Graph generated: {:?}", graph);
 }
