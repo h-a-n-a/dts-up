@@ -130,19 +130,27 @@ impl Graph {
   }
 
   fn link_export_all(&mut self) {
+    let mut module_visited: HashSet<ModuleIndex> = Default::default();
+
     self
       .get_sorted_modules()
       .clone()
       .into_iter()
       .for_each(|module_index| {
+        if module_visited.contains(&module_index) {
+          return;
+        }
+        module_visited.insert(module_index);
+
         let source_module_ids = self
           .module_graph
           .get_edges_directed(module_index, Direction::Incoming)
           .map(|edge| {
-            (
+            edge.id();
+            return (
               self.module_graph.get_module_id_by_index(&edge.source()),
               edge.weight().clone(),
-            )
+            );
           })
           .collect::<Vec<_>>();
 
@@ -156,6 +164,7 @@ impl Graph {
 
           match edge {
             ModuleEdge::ExportAll(_) => {
+              println!("module exports {:#?}", module_exports);
               module_exports
                 .into_iter()
                 .for_each(|(local_name, module_export)| {
@@ -171,8 +180,14 @@ impl Graph {
                       v.insert(module_export);
                     }
                     std::collections::hash_map::Entry::Occupied(o) => {
-                      // TODO: should we eliminate the panic if local_name is defined at the same statement?
-                      panic!("[Graph] duplicated key detected: {}", local_name);
+                      if !dep_module.imports.contains_key(&local_name) {
+                        println!(
+                          "dep module exports {:#?} id {}",
+                          dep_module.exports, dep_module.id
+                        );
+                        // TODO: should we eliminate the panic if local_name is defined at the same statement?
+                        panic!("[Graph] duplicated key detected: {}", local_name);
+                      }
                     }
                   }
                 })

@@ -1,13 +1,11 @@
 use std::collections::{HashMap, HashSet};
 
 use smol_str::SmolStr;
-use swc_common::util::take::Take;
 
 use crate::ast::parse::SOURCE_MAP;
 use crate::ast::{
   module::{Exports, LocalName},
   statement::{DeclStatement, Statement},
-  symbol,
 };
 use crate::finalizer::Finalizer;
 use crate::graph::{Graph, GraphOptions, ModuleIndex};

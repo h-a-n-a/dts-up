@@ -1,6 +1,7 @@
-// export type { baz } from "./baz"
-// export * from "./bar"
 import { bar } from "./bar"
-type foooo = number
-type fooo = foooo
-export type foo = fooo
+import { baz } from "./baz"
+export * from "./buz"
+export type foo = bar
+export interface Foo {
+   baz: baz
+}
