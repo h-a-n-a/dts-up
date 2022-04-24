@@ -169,22 +169,61 @@ impl Module {
     self.statements = statements;
   }
 
-  pub fn include_statement_with_mark_set(&mut self, mark_set: &HashSet<Mark>) {
-    self.statements.iter_mut().for_each(|s| match s {
+  pub fn include_statement_with_mark_set(&mut self, mark_set: &mut HashSet<Mark>) {
+    let mut mark_to_local_statement: HashMap<Mark, u32> = Default::default();
+
+    self
+      .statements
+      .iter()
+      .enumerate()
+      .for_each(|(index, s)| match s {
+        Statement::DeclStatement(s) => {
+          mark_to_local_statement.insert(s.mark, index as u32);
+        }
+        // import statement or non-declarative export statement are omitted
+        _ => (),
+      });
+
+    let mut maybe_local_reads: Vec<Mark> = Default::default();
+    let mut visited: HashSet<Mark> = Default::default();
+
+    self.statements.iter().for_each(|s| match s {
       Statement::DeclStatement(s) => {
         let repr_mark = symbol::SYMBOL_BOX.lock().find_root(s.mark);
         if mark_set.contains(&repr_mark) {
-          log::debug!(
-            "[Module] including statement with mark {:?}(repr mark: {:?}) \nstatement: {:?}",
-            s.mark,
-            repr_mark,
-            s,
-          );
-          s.include();
+          maybe_local_reads.push(s.mark);
+          maybe_local_reads.extend(&s.reads);
         }
       }
       // import statement or non-declarative export statement are omitted
       _ => (),
-    })
+    });
+
+    while let Some(maybe_local_mark) = maybe_local_reads.pop() {
+      if visited.contains(&maybe_local_mark) {
+        continue;
+      }
+      visited.insert(maybe_local_mark);
+
+      // if mark is located in current module, then include it.
+      if let Some(index) = mark_to_local_statement.get(&maybe_local_mark) {
+        match &mut self.statements[*index as usize] {
+          Statement::DeclStatement(s) => {
+            log::debug!(
+              "[Module] including statement with mark {:?} \nstatement: {:?}",
+              s.mark,
+              s,
+            );
+            s.include();
+          }
+          // import statement or non-declarative export statement are omitted
+          _ => (),
+        }
+      } else {
+        // if not, we find the repr mark, and let it be discovered in later visits.
+        let repr_mark = symbol::SYMBOL_BOX.lock().find_root(maybe_local_mark);
+        mark_set.insert(repr_mark);
+      }
+    }
   }
 }

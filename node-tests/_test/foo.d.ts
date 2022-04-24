@@ -1,3 +1,5 @@
 // export type { baz } from "./baz"
-export * from "./bar"
-export type foo = boolean
+// export * from "./bar"
+import { bar } from "./bar"
+type fooo = string
+export type foo = fooo

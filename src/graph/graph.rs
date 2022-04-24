@@ -302,7 +302,7 @@ impl Graph {
     let entry_module = self.get_module_by_module_index(&self.entry_module_index);
 
     // convert mark to representative mark in disjoint set
-    let marks_to_include = HashSet::from_iter(
+    let mut marks_to_include = HashSet::from_iter(
       entry_module
         .exports
         .values()
@@ -319,12 +319,12 @@ impl Graph {
     );
 
     self
-      .module_graph
-      .inner
-      .node_indices()
+      .get_sorted_modules()
+      .iter()
+      .rev()
       .for_each(|module_index| {
         let module = self.get_module_by_module_index_mut(&module_index);
-        module.include_statement_with_mark_set(&marks_to_include);
+        module.include_statement_with_mark_set(&mut marks_to_include);
       })
   }
 
