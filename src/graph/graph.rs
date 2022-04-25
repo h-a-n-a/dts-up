@@ -164,7 +164,6 @@ impl Graph {
 
           match edge {
             ModuleEdge::ExportAll(_) => {
-              println!("module exports {:#?}", module_exports);
               module_exports
                 .into_iter()
                 .for_each(|(local_name, module_export)| {
@@ -180,11 +179,8 @@ impl Graph {
                       v.insert(module_export);
                     }
                     std::collections::hash_map::Entry::Occupied(o) => {
+                      // FIXME: we cannot sure if export all identifier is the same with the imports, local name detect is loosy, we should figure it out later.
                       if !dep_module.imports.contains_key(&local_name) {
-                        println!(
-                          "dep module exports {:#?} id {}",
-                          dep_module.exports, dep_module.id
-                        );
                         // TODO: should we eliminate the panic if local_name is defined at the same statement?
                         panic!("[Graph] duplicated key detected: {}", local_name);
                       }

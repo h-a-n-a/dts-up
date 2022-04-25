@@ -9,7 +9,9 @@ async fn main() {
   });
 
   bundler.build().await.unwrap();
-  bundler.generate(DtsupGenerateOptions { outdir: "abc" });
+  bundler.generate(DtsupGenerateOptions {
+    outdir: Some("abc"),
+  });
 
   // println!("\n\n Graph generated: {:?}", graph);
 }

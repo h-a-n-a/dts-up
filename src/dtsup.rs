@@ -23,7 +23,11 @@ pub struct DtsupOptions<T: AsRef<str>> {
 }
 
 pub struct DtsupGenerateOptions<T: AsRef<str>> {
-  pub outdir: T,
+  pub outdir: Option<T>,
+}
+
+pub struct GenerateResult {
+  pub code: Vec<u8>,
 }
 
 impl Dtsup {
@@ -87,14 +91,7 @@ impl Dtsup {
     Ok(())
   }
 
-  fn generate_with_graph<T>(
-    &self,
-    graph: &Box<Graph>,
-    options: DtsupGenerateOptions<T>,
-  ) -> Result<(), Error>
-  where
-    T: AsRef<str>,
-  {
+  fn generate_with_graph(&self, graph: &Box<Graph>) -> Result<GenerateResult, Error> {
     use swc_ecma_ast::{EsVersion, ModuleItem};
     use swc_ecma_codegen::text_writer::JsWriter;
     use swc_ecma_visit::FoldWith;
@@ -130,19 +127,22 @@ impl Dtsup {
       emitter.emit_module_item(s).unwrap();
     });
 
-    let code = String::from_utf8(output)?;
-    log::debug!("[Dtsup] code generated: \n{}", code);
-
-    Ok(())
+    Ok(GenerateResult { code: output })
   }
 
-  pub fn generate<T>(&self, options: DtsupGenerateOptions<T>) -> Result<(), Error>
+  pub fn generate<T>(&self, options: DtsupGenerateOptions<T>) -> Result<GenerateResult, Error>
   where
     T: AsRef<str>,
   {
     if let Some(graph) = &self.graph {
-      self.generate_with_graph(graph, options);
-      Ok(())
+      let generate_result = self.generate_with_graph(graph)?;
+
+      log::debug!(
+        "[Dtsup] code generated: \n{}",
+        String::from_utf8(generate_result.code.clone())?
+      );
+
+      Ok(generate_result)
     } else {
       Err(Error::new_with_reason(
         DtsupErrorType::GraphMissingError,
